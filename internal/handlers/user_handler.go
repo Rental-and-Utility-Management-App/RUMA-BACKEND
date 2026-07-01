@@ -29,7 +29,16 @@ type createTenantRequest struct {
 	RoomID   string `json:"room_id"` // optional lúc tạo, có thể gán phòng sau
 }
 
-// POST /api/users - chỉ manager được tạo tài khoản tenant
+// CreateTenant godoc
+// @Summary Tạo tài khoản người thuê
+// @Description Chỉ Manager được tạo tài khoản Tenant.
+// @Tags Users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body createTenantRequest true "Thông tin người thuê"
+// @Success 201 {object} map[string]interface{}
+// @Router /api/users [post]
 func (h *UserHandler) CreateTenant(c *gin.Context) {
 	var req createTenantRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -100,7 +109,15 @@ func (h *UserHandler) CreateTenant(c *gin.Context) {
 	utils.Success(c, http.StatusCreated, "Tạo tài khoản người thuê thành công", user.ToResponse())
 }
 
-// GET /api/users - manager xem danh sách tất cả tenant
+// ListTenants godoc
+// @Summary Danh sách người thuê
+// @Description Manager xem danh sách tất cả tenant.
+// @Tags Users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Router /api/users [get]
 func (h *UserHandler) ListTenants(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -127,7 +144,16 @@ func (h *UserHandler) ListTenants(c *gin.Context) {
 	utils.Success(c, http.StatusOK, "Lấy danh sách thành công", responses)
 }
 
-// GET /api/users/:id
+// GetTenant godoc
+// @Summary Xem chi tiết người thuê
+// @Description Manager xem thông tin chi tiết một tenant theo ID.
+// @Tags Users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Tenant ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/users/{id} [get]
 func (h *UserHandler) GetTenant(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
@@ -158,7 +184,17 @@ type updateTenantRequest struct {
 	IsActive *bool  `json:"is_active"`
 }
 
-// PUT /api/users/:id - manager cập nhật thông tin tenant
+// UpdateTenant godoc
+// @Summary Cập nhật người thuê
+// @Description Manager cập nhật thông tin tenant.
+// @Tags Users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Tenant ID"
+// @Param request body updateTenantRequest true "Thông tin cập nhật"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/users/{id} [put]
 func (h *UserHandler) UpdateTenant(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {

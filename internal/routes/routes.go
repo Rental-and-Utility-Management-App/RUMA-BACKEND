@@ -1,7 +1,15 @@
 package routes
 
 import (
+	"time"
+
 	"github.com/gin-gonic/gin"
+
+	// 1. Thêm 3 thư viện này của Swagger
+	_ "rental-app/docs" // CỰC KỲ QUAN TRỌNG: Import thư mục docs do lệnh 'swag init' sinh ra
+
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"rental-app/internal/config"
 	"rental-app/internal/handlers"
@@ -10,18 +18,27 @@ import (
 )
 
 func SetupRoutes(r *gin.Engine, cfg *config.Config) {
+	// 0. Bật CORS cho toàn bộ API (đặt trước mọi route khác)
+	r.Use(middleware.CORS(cfg.AllowedOrigins))
+
+	// 2. Bật giao diện Swagger Web (Route này để ở ngoài cùng, ai cũng truy cập được để xem docs)
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
 	authHandler := handlers.NewAuthHandler(cfg)
 	userHandler := handlers.NewUserHandler()
 	roomHandler := handlers.NewRoomHandler()
 	invoiceHandler := handlers.NewInvoiceHandler()
 	paymentHandler := handlers.NewPaymentHandler()
 
+	// Rate limit riêng cho login: tối đa 5 lần thử/phút theo từng IP, chống brute-force.
+	loginLimiter := middleware.NewRateLimiter(5, time.Minute)
+
 	api := r.Group("/api")
 
 	// ---- Public routes ----
 	auth := api.Group("/auth")
 	{
-		auth.POST("/login", authHandler.Login)
+		auth.POST("/login", loginLimiter.Middleware(), authHandler.Login)
 	}
 
 	// ---- Protected routes (cần JWT) ----

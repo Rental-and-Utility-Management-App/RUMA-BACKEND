@@ -1,0 +1,565 @@
+basePath: /
+definitions:
+  handlers.changePasswordRequest:
+    properties:
+      new_password:
+        minLength: 6
+        type: string
+      old_password:
+        type: string
+    required:
+    - new_password
+    - old_password
+    type: object
+  handlers.createInvoiceRequest:
+    properties:
+      due_date:
+        description: 'format: 2006-01-02'
+        type: string
+      electric_new:
+        type: number
+      electric_old:
+        type: number
+      month:
+        maximum: 12
+        minimum: 1
+        type: integer
+      other_fees:
+        type: number
+      other_note:
+        type: string
+      room_id:
+        type: string
+      water_new:
+        type: number
+      water_old:
+        type: number
+      year:
+        type: integer
+    required:
+    - electric_new
+    - month
+    - room_id
+    - water_new
+    - year
+    type: object
+  handlers.createPaymentRequest:
+    properties:
+      amount:
+        type: number
+      invoice_id:
+        type: string
+      method:
+        description: cash | bank_transfer | other
+        type: string
+      note:
+        type: string
+      paid_at:
+        description: 'format: 2006-01-02, mặc định là hôm nay'
+        type: string
+    required:
+    - amount
+    - invoice_id
+    - method
+    type: object
+  handlers.createRoomRequest:
+    properties:
+      code:
+        type: string
+      electric_price:
+        type: number
+      floor:
+        type: integer
+      monthly_rent:
+        type: number
+      name:
+        type: string
+      note:
+        type: string
+      water_price:
+        type: number
+    required:
+    - code
+    - electric_price
+    - monthly_rent
+    - water_price
+    type: object
+  handlers.createTenantRequest:
+    properties:
+      email:
+        type: string
+      full_name:
+        type: string
+      password:
+        minLength: 6
+        type: string
+      phone:
+        type: string
+      room_id:
+        description: optional lúc tạo, có thể gán phòng sau
+        type: string
+    required:
+    - full_name
+    - password
+    - phone
+    type: object
+  handlers.loginRequest:
+    properties:
+      password:
+        type: string
+      phone:
+        type: string
+    required:
+    - password
+    - phone
+    type: object
+  handlers.updateRoomRequest:
+    properties:
+      electric_price:
+        type: number
+      floor:
+        type: integer
+      monthly_rent:
+        type: number
+      name:
+        type: string
+      note:
+        type: string
+      status:
+        type: string
+      water_price:
+        type: number
+    type: object
+  handlers.updateTenantRequest:
+    properties:
+      email:
+        type: string
+      full_name:
+        type: string
+      is_active:
+        type: boolean
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@ruma.local
+    name: RUMA Support
+  description: 'API quản lý nhà trọ: phòng, người thuê, hóa đơn, thanh toán.'
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: http://swagger.io/terms/
+  title: RUMA Backend API
+  version: "1.0"
+paths:
+  /api/auth/change-password:
+    put:
+      consumes:
+      - application/json
+      description: Đổi mật khẩu cho user đang đăng nhập.
+      parameters:
+      - description: Mật khẩu cũ và mới
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.changePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Đổi mật khẩu
+      tags:
+      - Auth
+  /api/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Đăng nhập chung cho cả Manager và Tenant, trả về JWT token.
+      parameters:
+      - description: Thông tin đăng nhập
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.loginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Đăng nhập
+      tags:
+      - Auth
+  /api/auth/me:
+    get:
+      consumes:
+      - application/json
+      description: Lấy thông tin user đang đăng nhập (từ JWT token).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lấy thông tin bản thân
+      tags:
+      - Auth
+  /api/invoices:
+    get:
+      consumes:
+      - application/json
+      description: Manager xem tất cả, Tenant chỉ xem hóa đơn của mình. Có thể lọc
+        theo room_id, status.
+      parameters:
+      - description: Lọc theo phòng
+        in: query
+        name: room_id
+        type: string
+      - description: Lọc theo trạng thái
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách hóa đơn
+      tags:
+      - Invoices
+    post:
+      consumes:
+      - application/json
+      description: Manager tạo hóa đơn cho 1 phòng trong 1 tháng.
+      parameters:
+      - description: Thông tin hóa đơn
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.createInvoiceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tạo hóa đơn
+      tags:
+      - Invoices
+  /api/invoices/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Xem thông tin chi tiết một hóa đơn theo ID.
+      parameters:
+      - description: Invoice ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xem chi tiết hóa đơn
+      tags:
+      - Invoices
+  /api/payments:
+    get:
+      consumes:
+      - application/json
+      description: Manager xem tất cả, Tenant chỉ xem của mình. Có thể lọc theo invoice_id.
+      parameters:
+      - description: Lọc theo hóa đơn
+        in: query
+        name: invoice_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách thanh toán
+      tags:
+      - Payments
+    post:
+      consumes:
+      - application/json
+      description: Manager ghi nhận 1 lần thanh toán cho hóa đơn.
+      parameters:
+      - description: Thông tin thanh toán
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.createPaymentRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Ghi nhận thanh toán
+      tags:
+      - Payments
+  /api/rooms:
+    get:
+      consumes:
+      - application/json
+      description: Manager xem tất cả phòng, Tenant chỉ xem phòng của mình.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lấy danh sách phòng
+      tags:
+      - Rooms
+    post:
+      consumes:
+      - application/json
+      description: Manager tạo phòng mới. Cần quyền Manager.
+      parameters:
+      - description: Thông tin phòng
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.createRoomRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tạo phòng mới
+      tags:
+      - Rooms
+  /api/rooms/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Manager xóa phòng (Không thể xóa phòng đang có người ở).
+      parameters:
+      - description: ID của phòng
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xóa phòng
+      tags:
+      - Rooms
+    get:
+      consumes:
+      - application/json
+      description: Lấy thông tin chi tiết phòng theo ID.
+      parameters:
+      - description: ID của phòng
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xem chi tiết một phòng
+      tags:
+      - Rooms
+    put:
+      consumes:
+      - application/json
+      description: Manager cập nhật thông tin phòng.
+      parameters:
+      - description: ID của phòng
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Dữ liệu cập nhật
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.updateRoomRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cập nhật thông tin phòng
+      tags:
+      - Rooms
+  /api/users:
+    get:
+      consumes:
+      - application/json
+      description: Manager xem danh sách tất cả tenant.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách người thuê
+      tags:
+      - Users
+    post:
+      consumes:
+      - application/json
+      description: Chỉ Manager được tạo tài khoản Tenant.
+      parameters:
+      - description: Thông tin người thuê
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.createTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tạo tài khoản người thuê
+      tags:
+      - Users
+  /api/users/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Manager xem thông tin chi tiết một tenant theo ID.
+      parameters:
+      - description: Tenant ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xem chi tiết người thuê
+      tags:
+      - Users
+    put:
+      consumes:
+      - application/json
+      description: Manager cập nhật thông tin tenant.
+      parameters:
+      - description: Tenant ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Thông tin cập nhật
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.updateTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cập nhật người thuê
+      tags:
+      - Users
+schemes:
+- http
+securityDefinitions:
+  BearerAuth:
+    description: 'Nhập theo định dạng: Bearer {token}'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

@@ -38,7 +38,16 @@ type createInvoiceRequest struct {
 	DueDate string `json:"due_date"` // format: 2006-01-02
 }
 
-// POST /api/invoices - manager tạo hóa đơn cho 1 phòng trong 1 tháng
+// CreateInvoice godoc
+// @Summary Tạo hóa đơn
+// @Description Manager tạo hóa đơn cho 1 phòng trong 1 tháng.
+// @Tags Invoices
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body createInvoiceRequest true "Thông tin hóa đơn"
+// @Success 201 {object} map[string]interface{}
+// @Router /api/invoices [post]
 func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 	var req createInvoiceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -142,7 +151,17 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 	utils.Success(c, http.StatusCreated, "Tạo hóa đơn thành công", invoice)
 }
 
-// GET /api/invoices - manager xem tất cả, tenant chỉ xem hóa đơn của mình
+// ListInvoices godoc
+// @Summary Danh sách hóa đơn
+// @Description Manager xem tất cả, Tenant chỉ xem hóa đơn của mình. Có thể lọc theo room_id, status.
+// @Tags Invoices
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param room_id query string false "Lọc theo phòng"
+// @Param status query string false "Lọc theo trạng thái"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/invoices [get]
 func (h *InvoiceHandler) ListInvoices(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -186,7 +205,16 @@ func (h *InvoiceHandler) ListInvoices(c *gin.Context) {
 	utils.Success(c, http.StatusOK, "Lấy danh sách hóa đơn thành công", invoices)
 }
 
-// GET /api/invoices/:id
+// GetInvoice godoc
+// @Summary Xem chi tiết hóa đơn
+// @Description Xem thông tin chi tiết một hóa đơn theo ID.
+// @Tags Invoices
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/invoices/{id} [get]
 func (h *InvoiceHandler) GetInvoice(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {

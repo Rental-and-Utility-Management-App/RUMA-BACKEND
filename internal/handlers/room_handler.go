@@ -31,7 +31,16 @@ type createRoomRequest struct {
 	Note          string  `json:"note"`
 }
 
-// POST /api/rooms - manager tạo phòng mới
+// CreateRoom godoc
+// @Summary Tạo phòng mới
+// @Description Manager tạo phòng mới. Cần quyền Manager.
+// @Tags Rooms
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body createRoomRequest true "Thông tin phòng"
+// @Success 201 {object} map[string]interface{}
+// @Router /api/rooms [post]
 func (h *RoomHandler) CreateRoom(c *gin.Context) {
 	var req createRoomRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -76,7 +85,15 @@ func (h *RoomHandler) CreateRoom(c *gin.Context) {
 	utils.Success(c, http.StatusCreated, "Tạo phòng thành công", room)
 }
 
-// GET /api/rooms - manager xem tất cả, tenant chỉ xem phòng của mình (được lọc ở route/handler)
+// ListRooms godoc
+// @Summary Lấy danh sách phòng
+// @Description Manager xem tất cả phòng, Tenant chỉ xem phòng của mình.
+// @Tags Rooms
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Router /api/rooms [get]
 func (h *RoomHandler) ListRooms(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -102,7 +119,8 @@ func (h *RoomHandler) ListRooms(c *gin.Context) {
 	}
 	defer cursor.Close(ctx)
 
-	var rooms []models.Room
+	// Fix: Khởi tạo mảng rỗng để frontend không bị lỗi null
+	rooms := make([]models.Room, 0)
 	if err := cursor.All(ctx, &rooms); err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Lỗi đọc dữ liệu")
 		return
@@ -111,7 +129,16 @@ func (h *RoomHandler) ListRooms(c *gin.Context) {
 	utils.Success(c, http.StatusOK, "Lấy danh sách phòng thành công", rooms)
 }
 
-// GET /api/rooms/:id
+// GetRoom godoc
+// @Summary Xem chi tiết một phòng
+// @Description Lấy thông tin chi tiết phòng theo ID.
+// @Tags Rooms
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "ID của phòng"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/rooms/{id} [get]
 func (h *RoomHandler) GetRoom(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
@@ -133,7 +160,6 @@ func (h *RoomHandler) GetRoom(c *gin.Context) {
 		return
 	}
 
-	// Tenant chỉ được xem phòng của chính mình
 	role := c.GetString("role")
 	if role == string(models.RoleTenant) {
 		userIDStr := c.GetString("user_id")
@@ -146,6 +172,7 @@ func (h *RoomHandler) GetRoom(c *gin.Context) {
 	utils.Success(c, http.StatusOK, "OK", room)
 }
 
+// Sửa Note thành con trỏ *string để có thể xóa trắng ghi chú
 type updateRoomRequest struct {
 	Name          string   `json:"name"`
 	Floor         *int     `json:"floor"`
@@ -153,10 +180,20 @@ type updateRoomRequest struct {
 	ElectricPrice *float64 `json:"electric_price"`
 	WaterPrice    *float64 `json:"water_price"`
 	Status        string   `json:"status"`
-	Note          string   `json:"note"`
+	Note          *string  `json:"note"`
 }
 
-// PUT /api/rooms/:id - manager cập nhật thông tin phòng
+// UpdateRoom godoc
+// @Summary Cập nhật thông tin phòng
+// @Description Manager cập nhật thông tin phòng.
+// @Tags Rooms
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "ID của phòng"
+// @Param request body updateRoomRequest true "Dữ liệu cập nhật"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/rooms/{id} [put]
 func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
@@ -189,8 +226,8 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 	if req.Status != "" {
 		update["status"] = req.Status
 	}
-	if req.Note != "" {
-		update["note"] = req.Note
+	if req.Note != nil {
+		update["note"] = *req.Note
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -210,7 +247,16 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 	utils.Success(c, http.StatusOK, "Cập nhật phòng thành công", nil)
 }
 
-// DELETE /api/rooms/:id
+// DeleteRoom godoc
+// @Summary Xóa phòng
+// @Description Manager xóa phòng (Không thể xóa phòng đang có người ở).
+// @Tags Rooms
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "ID của phòng"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/rooms/{id} [delete]
 func (h *RoomHandler) DeleteRoom(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
