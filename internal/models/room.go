@@ -21,9 +21,11 @@ type Room struct {
 	Floor    int                 `bson:"floor,omitempty" json:"floor,omitempty"`
 	TenantID *primitive.ObjectID `bson:"tenant_id,omitempty" json:"tenant_id,omitempty"`
 
-	MonthlyRent   float64 `bson:"monthly_rent" json:"monthly_rent"`
-	ElectricPrice float64 `bson:"electric_price" json:"electric_price"`
-	WaterPrice    float64 `bson:"water_price" json:"water_price"`
+	MonthlyRent            float64 `bson:"monthly_rent" json:"monthly_rent"`
+	ElectricPrice          float64 `bson:"price_electricity" json:"price_electricity"`
+	WaterPrice             float64 `bson:"price_water" json:"price_water"`
+	Occupants              int     `bson:"occupants" json:"occupants"`                                 // số người đang ở phòng
+	ManagementFeePerPerson float64 `bson:"management_fee_per_person" json:"management_fee_per_person"` // đơn giá phí quản lý / người / tháng
 
 	Status RoomStatus `bson:"status" json:"status"`
 	Note   string     `bson:"note,omitempty" json:"note,omitempty"`
