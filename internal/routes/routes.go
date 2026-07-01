@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"context"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,11 +17,26 @@ import (
 	"rental-app/internal/handlers"
 	"rental-app/internal/middleware"
 	"rental-app/internal/models"
+	"rental-app/internal/utils"
 )
 
 func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 	// 0. Bật CORS cho toàn bộ API (đặt trước mọi route khác)
 	r.Use(middleware.CORS(cfg.AllowedOrigins))
+
+	// Healthcheck - dùng cho Docker HEALTHCHECK, load balancer, uptime monitor...
+	// Kiểm tra luôn kết nối MongoDB để phản ánh đúng tình trạng "sẵn sàng phục vụ".
+	r.GET("/healthz", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+
+		if err := config.Client.Ping(ctx, nil); err != nil {
+			utils.Error(c, http.StatusServiceUnavailable, "Không kết nối được cơ sở dữ liệu")
+			return
+		}
+
+		utils.Success(c, http.StatusOK, "OK", gin.H{"status": "healthy"})
+	})
 
 	// 2. Bật giao diện Swagger Web (Route này để ở ngoài cùng, ai cũng truy cập được để xem docs)
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
@@ -70,6 +87,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 				roomsManagerOnly.POST("", roomHandler.CreateRoom)
 				roomsManagerOnly.PUT("/:id", roomHandler.UpdateRoom)
 				roomsManagerOnly.DELETE("/:id", roomHandler.DeleteRoom)
+				roomsManagerOnly.POST("/:id/checkout", roomHandler.CheckoutRoom)
 			}
 		}
 
