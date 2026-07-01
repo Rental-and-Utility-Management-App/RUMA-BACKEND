@@ -15,73 +15,137 @@ import (
 	"rental-app/internal/utils"
 )
 
-type RoomHandler struct{}
+type InvoiceHandler struct{}
 
-func NewRoomHandler() *RoomHandler {
-	return &RoomHandler{}
+func NewInvoiceHandler() *InvoiceHandler {
+	return &InvoiceHandler{}
 }
 
-type createRoomRequest struct {
-	Code          string  `json:"code" binding:"required"`
-	Name          string  `json:"name"`
-	Floor         int     `json:"floor"`
-	MonthlyRent   float64 `json:"monthly_rent" binding:"required"`
-	ElectricPrice float64 `json:"electric_price" binding:"required"`
-	WaterPrice    float64 `json:"water_price" binding:"required"`
-	Note          string  `json:"note"`
+type createInvoiceRequest struct {
+	RoomID string `json:"room_id" binding:"required"`
+	Month  int    `json:"month" binding:"required,min=1,max=12"`
+	Year   int    `json:"year" binding:"required"`
+
+	ElectricOld float64 `json:"electric_old"`
+	ElectricNew float64 `json:"electric_new" binding:"required"`
+
+	WaterOld float64 `json:"water_old"`
+	WaterNew float64 `json:"water_new" binding:"required"`
+
+	OtherFees float64 `json:"other_fees"`
+	OtherNote string  `json:"other_note"`
+
+	DueDate string `json:"due_date"` // format: 2006-01-02
 }
 
-// POST /api/rooms - manager tạo phòng mới
-func (h *RoomHandler) CreateRoom(c *gin.Context) {
-	var req createRoomRequest
+// POST /api/invoices - manager tạo hóa đơn cho 1 phòng trong 1 tháng
+func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
+	var req createInvoiceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
 		return
 	}
 
+	roomID, err := primitive.ObjectIDFromHex(req.RoomID)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "Room ID không hợp lệ")
+		return
+	}
+
+	if req.ElectricNew < req.ElectricOld {
+		utils.Error(c, http.StatusBadRequest, "Chỉ số điện mới không được nhỏ hơn chỉ số cũ")
+		return
+	}
+	if req.WaterNew < req.WaterOld {
+		utils.Error(c, http.StatusBadRequest, "Chỉ số nước mới không được nhỏ hơn chỉ số cũ")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	roomsCol := config.GetCollection("rooms")
+	var room models.Room
+	if err := roomsCol.FindOne(ctx, bson.M{"_id": roomID}).Decode(&room); err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
 
-	count, err := roomsCol.CountDocuments(ctx, bson.M{"code": req.Code})
+	if room.TenantID == nil {
+		utils.Error(c, http.StatusConflict, "Phòng chưa có người thuê, không thể tạo hóa đơn")
+		return
+	}
+
+	invoicesCol := config.GetCollection("invoices")
+	count, err := invoicesCol.CountDocuments(ctx, bson.M{"room_id": roomID, "month": req.Month, "year": req.Year})
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
 		return
 	}
 	if count > 0 {
-		utils.Error(c, http.StatusConflict, "Mã phòng đã tồn tại")
+		utils.Error(c, http.StatusConflict, "Hóa đơn của phòng này trong tháng đã tồn tại")
 		return
 	}
 
-	room := models.Room{
-		ID:            primitive.NewObjectID(),
-		Code:          req.Code,
-		Name:          req.Name,
-		Floor:         req.Floor,
-		MonthlyRent:   req.MonthlyRent,
-		ElectricPrice: req.ElectricPrice,
-		WaterPrice:    req.WaterPrice,
-		Status:        models.RoomStatusAvailable,
-		Note:          req.Note,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
+	electricAmount := (req.ElectricNew - req.ElectricOld) * room.ElectricPrice
+	waterAmount := (req.WaterNew - req.WaterOld) * room.WaterPrice
+	totalAmount := room.MonthlyRent + electricAmount + waterAmount + req.OtherFees
+
+	dueDate := time.Now().AddDate(0, 0, 7)
+	if req.DueDate != "" {
+		if parsed, err := time.Parse("2006-01-02", req.DueDate); err == nil {
+			dueDate = parsed
+		}
 	}
 
-	if _, err := roomsCol.InsertOne(ctx, room); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Không thể tạo phòng")
+	invoice := models.Invoice{
+		ID:       primitive.NewObjectID(),
+		RoomID:   roomID,
+		TenantID: *room.TenantID,
+
+		Month: req.Month,
+		Year:  req.Year,
+
+		RentAmount: room.MonthlyRent,
+
+		ElectricOld:    req.ElectricOld,
+		ElectricNew:    req.ElectricNew,
+		ElectricPrice:  room.ElectricPrice,
+		ElectricAmount: electricAmount,
+
+		WaterOld:    req.WaterOld,
+		WaterNew:    req.WaterNew,
+		WaterPrice:  room.WaterPrice,
+		WaterAmount: waterAmount,
+
+		OtherFees: req.OtherFees,
+		OtherNote: req.OtherNote,
+
+		TotalAmount: totalAmount,
+		PaidAmount:  0,
+		Status:      models.InvoiceStatusUnpaid,
+
+		DueDate:   dueDate,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	if _, err := invoicesCol.InsertOne(ctx, invoice); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Không thể tạo hóa đơn")
 		return
 	}
 
-	utils.Success(c, http.StatusCreated, "Tạo phòng thành công", room)
+	utils.Success(c, http.StatusCreated, "Tạo hóa đơn thành công", invoice)
 }
 
-// GET /api/rooms - manager xem tất cả, tenant chỉ xem phòng của mình (được lọc ở route/handler)
-func (h *RoomHandler) ListRooms(c *gin.Context) {
+// GET /api/invoices - manager xem tất cả, tenant chỉ xem hóa đơn của mình
+func (h *InvoiceHandler) ListInvoices(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	roomsCol := config.GetCollection("rooms")
 
 	filter := bson.M{}
 	role := c.GetString("role")
@@ -95,24 +159,35 @@ func (h *RoomHandler) ListRooms(c *gin.Context) {
 		filter["tenant_id"] = userID
 	}
 
-	cursor, err := roomsCol.Find(ctx, filter)
+	if roomIDStr := c.Query("room_id"); roomIDStr != "" {
+		roomID, err := primitive.ObjectIDFromHex(roomIDStr)
+		if err == nil {
+			filter["room_id"] = roomID
+		}
+	}
+	if status := c.Query("status"); status != "" {
+		filter["status"] = status
+	}
+
+	invoicesCol := config.GetCollection("invoices")
+	cursor, err := invoicesCol.Find(ctx, filter, options_findSortByCreatedDesc())
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
 		return
 	}
 	defer cursor.Close(ctx)
 
-	var rooms []models.Room
-	if err := cursor.All(ctx, &rooms); err != nil {
+	var invoices []models.Invoice
+	if err := cursor.All(ctx, &invoices); err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Lỗi đọc dữ liệu")
 		return
 	}
 
-	utils.Success(c, http.StatusOK, "Lấy danh sách phòng thành công", rooms)
+	utils.Success(c, http.StatusOK, "Lấy danh sách hóa đơn thành công", invoices)
 }
 
-// GET /api/rooms/:id
-func (h *RoomHandler) GetRoom(c *gin.Context) {
+// GET /api/invoices/:id
+func (h *InvoiceHandler) GetInvoice(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
 		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
@@ -122,121 +197,26 @@ func (h *RoomHandler) GetRoom(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	roomsCol := config.GetCollection("rooms")
-	var room models.Room
-	if err := roomsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&room); err != nil {
+	invoicesCol := config.GetCollection("invoices")
+	var invoice models.Invoice
+	if err := invoicesCol.FindOne(ctx, bson.M{"_id": id}).Decode(&invoice); err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hóa đơn")
 			return
 		}
 		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
 		return
 	}
 
-	// Tenant chỉ được xem phòng của chính mình
+	// Tenant chỉ được xem hóa đơn của chính mình
 	role := c.GetString("role")
 	if role == string(models.RoleTenant) {
 		userIDStr := c.GetString("user_id")
-		if room.TenantID == nil || room.TenantID.Hex() != userIDStr {
-			utils.Error(c, http.StatusForbidden, "Bạn không có quyền xem phòng này")
+		if invoice.TenantID.Hex() != userIDStr {
+			utils.Error(c, http.StatusForbidden, "Bạn không có quyền xem hóa đơn này")
 			return
 		}
 	}
 
-	utils.Success(c, http.StatusOK, "OK", room)
-}
-
-type updateRoomRequest struct {
-	Name          string   `json:"name"`
-	Floor         *int     `json:"floor"`
-	MonthlyRent   *float64 `json:"monthly_rent"`
-	ElectricPrice *float64 `json:"electric_price"`
-	WaterPrice    *float64 `json:"water_price"`
-	Status        string   `json:"status"`
-	Note          string   `json:"note"`
-}
-
-// PUT /api/rooms/:id - manager cập nhật thông tin phòng
-func (h *RoomHandler) UpdateRoom(c *gin.Context) {
-	id, err := primitive.ObjectIDFromHex(c.Param("id"))
-	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
-		return
-	}
-
-	var req updateRoomRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
-		return
-	}
-
-	update := bson.M{"updated_at": time.Now()}
-	if req.Name != "" {
-		update["name"] = req.Name
-	}
-	if req.Floor != nil {
-		update["floor"] = *req.Floor
-	}
-	if req.MonthlyRent != nil {
-		update["monthly_rent"] = *req.MonthlyRent
-	}
-	if req.ElectricPrice != nil {
-		update["electric_price"] = *req.ElectricPrice
-	}
-	if req.WaterPrice != nil {
-		update["water_price"] = *req.WaterPrice
-	}
-	if req.Status != "" {
-		update["status"] = req.Status
-	}
-	if req.Note != "" {
-		update["note"] = req.Note
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	roomsCol := config.GetCollection("rooms")
-	res, err := roomsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": update})
-	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
-		return
-	}
-	if res.MatchedCount == 0 {
-		utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
-		return
-	}
-
-	utils.Success(c, http.StatusOK, "Cập nhật phòng thành công", nil)
-}
-
-// DELETE /api/rooms/:id
-func (h *RoomHandler) DeleteRoom(c *gin.Context) {
-	id, err := primitive.ObjectIDFromHex(c.Param("id"))
-	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	roomsCol := config.GetCollection("rooms")
-
-	var room models.Room
-	if err := roomsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&room); err != nil {
-		utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
-		return
-	}
-	if room.Status == models.RoomStatusOccupied {
-		utils.Error(c, http.StatusConflict, "Không thể xóa phòng đang có người thuê")
-		return
-	}
-
-	if _, err := roomsCol.DeleteOne(ctx, bson.M{"_id": id}); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Không thể xóa phòng")
-		return
-	}
-
-	utils.Success(c, http.StatusOK, "Xóa phòng thành công", nil)
+	utils.Success(c, http.StatusOK, "OK", invoice)
 }
