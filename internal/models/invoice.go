@@ -46,6 +46,10 @@ type Invoice struct {
 	PaidAmount  float64       `bson:"paid_amount" json:"paid_amount"`
 	Status      InvoiceStatus `bson:"status" json:"status"`
 
+	// PaymentRefCode: mã tham chiếu duy nhất dùng làm nội dung chuyển khoản,
+	// giúp webhook (SePay...) tự động đối soát giao dịch về đúng hóa đơn.
+	PaymentRefCode string `bson:"payment_ref_code,omitempty" json:"payment_ref_code,omitempty"`
+
 	DueDate   time.Time `bson:"due_date" json:"due_date"`
 	CreatedAt time.Time `bson:"created_at" json:"created_at"`
 	UpdatedAt time.Time `bson:"updated_at" json:"updated_at"`

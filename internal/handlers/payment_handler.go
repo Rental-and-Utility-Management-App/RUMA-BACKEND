@@ -2,7 +2,12 @@ package handlers
 
 import (
 	"context"
+	"crypto/subtle"
+	"encoding/json"
+	"io"
+	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,10 +20,12 @@ import (
 	"rental-app/internal/utils"
 )
 
-type PaymentHandler struct{}
+type PaymentHandler struct {
+	cfg *config.Config
+}
 
-func NewPaymentHandler() *PaymentHandler {
-	return &PaymentHandler{}
+func NewPaymentHandler(cfg *config.Config) *PaymentHandler {
+	return &PaymentHandler{cfg: cfg}
 }
 
 type createPaymentRequest struct {
@@ -187,4 +194,170 @@ func (h *PaymentHandler) ListPayments(c *gin.Context) {
 	}
 
 	utils.Success(c, http.StatusOK, "Lấy danh sách thanh toán thành công", payments)
+}
+
+// sepayWebhookPayload theo đúng cấu trúc SePay gửi về, xem:
+// https://docs.sepay.vn/tich-hop-webhooks.html
+type sepayWebhookPayload struct {
+	ID              int64   `json:"id"` // ID giao dịch phía SePay, dùng để chống trùng lặp
+	Gateway         string  `json:"gateway"`
+	TransactionDate string  `json:"transactionDate"`
+	AccountNumber   string  `json:"accountNumber"`
+	SubAccount      string  `json:"subAccount"`
+	Code            string  `json:"code"`
+	Content         string  `json:"content"`
+	TransferType    string  `json:"transferType"` // "in" | "out"
+	Description     string  `json:"description"`
+	TransferAmount  float64 `json:"transferAmount"`
+	Accumulated     float64 `json:"accumulated"`
+	ReferenceCode   string  `json:"referenceCode"`
+}
+
+// SepayWebhook godoc
+// @Summary Webhook nhận báo giao dịch từ SePay
+// @Description Endpoint public (không cần JWT) để SePay gọi đến mỗi khi có biến động số dư.
+// @Description Xác thực bằng header Authorization: Apikey <SEPAY_WEBHOOK_API_KEY>.
+// @Description Tự động đối soát theo mã tham chiếu trong nội dung chuyển khoản và ghi nhận thanh toán.
+// @Tags Payments
+// @Accept json
+// @Produce json
+// @Param request body sepayWebhookPayload true "Payload từ SePay"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/webhooks/sepay [post]
+func (h *PaymentHandler) SepayWebhook(c *gin.Context) {
+	// --- Xác thực API Key ---
+	// Bắt buộc phải cấu hình SEPAY_WEBHOOK_API_KEY, không cho phép bỏ qua xác thực.
+	if h.cfg.SepayWebhookAPIKey == "" {
+		log.Println("⚠️  Nhận webhook SePay nhưng SEPAY_WEBHOOK_API_KEY chưa được cấu hình -> từ chối")
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false})
+		return
+	}
+
+	authHeader := c.GetHeader("Authorization")
+	expected := "Apikey " + h.cfg.SepayWebhookAPIKey
+	if subtle.ConstantTimeCompare([]byte(authHeader), []byte(expected)) != 1 {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false})
+		return
+	}
+
+	// --- Đọc và parse payload ---
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false})
+		return
+	}
+
+	var payload sepayWebhookPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false})
+		return
+	}
+
+	// Chỉ xử lý giao dịch tiền VÀO. Vẫn trả success để SePay không retry vô ích.
+	if payload.TransferType != "in" {
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// --- Chống xử lý trùng: nếu transaction id này đã ghi nhận rồi thì bỏ qua ---
+	externalTxnID := formatSepayTxnID(payload.ID)
+	paymentsCol := config.GetCollection("payments")
+
+	var existing models.Payment
+	err = paymentsCol.FindOne(ctx, bson.M{"external_transaction_id": externalTxnID}).Decode(&existing)
+	if err == nil {
+		// Đã xử lý từ trước (webhook gửi lại) -> báo thành công, không làm lại.
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+	if err != mongo.ErrNoDocuments {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false})
+		return
+	}
+
+	// --- Đối soát: tìm mã tham chiếu hóa đơn trong nội dung giao dịch ---
+	refCode, found := utils.ExtractInvoiceRefCode(payload.Content)
+	if !found {
+		refCode, found = utils.ExtractInvoiceRefCode(payload.Description)
+	}
+	if !found {
+		log.Printf("ℹ️  Webhook SePay: không tìm thấy mã hóa đơn trong nội dung \"%s\" (giao dịch id=%d)\n", payload.Content, payload.ID)
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+
+	invoicesCol := config.GetCollection("invoices")
+	var invoice models.Invoice
+	if err := invoicesCol.FindOne(ctx, bson.M{"payment_ref_code": refCode}).Decode(&invoice); err != nil {
+		if err == mongo.ErrNoDocuments {
+			log.Printf("ℹ️  Webhook SePay: không tìm thấy hóa đơn với mã %s (giao dịch id=%d)\n", refCode, payload.ID)
+			c.JSON(http.StatusOK, gin.H{"success": true})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false})
+		return
+	}
+
+	if invoice.Status == models.InvoiceStatusPaid {
+		// Hóa đơn đã đủ tiền từ trước (vd: manager lỡ ghi nhận tay) -> vẫn lưu lại
+		// giao dịch để không mất dấu vết dòng tiền, nhưng không cộng dồn thêm vào invoice.
+		log.Printf("ℹ️  Webhook SePay: hóa đơn %s đã thanh toán đủ, chỉ lưu lại giao dịch để đối soát\n", refCode)
+	}
+
+	payment := models.Payment{
+		ID:                    primitive.NewObjectID(),
+		InvoiceID:             invoice.ID,
+		RoomID:                invoice.RoomID,
+		TenantID:              invoice.TenantID,
+		Amount:                payload.TransferAmount,
+		Method:                models.PaymentMethodTransfer,
+		Note:                  "Tự động xác nhận qua SePay - GD " + payload.ReferenceCode,
+		ConfirmedBy:           primitive.NilObjectID, // hệ thống tự xác nhận, không phải manager
+		IsAutoConfirmed:       true,
+		ExternalTransactionID: externalTxnID,
+		PaidAt:                time.Now(),
+		CreatedAt:             time.Now(),
+	}
+
+	if _, err := paymentsCol.InsertOne(ctx, payment); err != nil {
+		// Có thể do trùng unique index (webhook gửi đua nhau) -> coi như đã xử lý, báo thành công.
+		if mongo.IsDuplicateKeyError(err) {
+			c.JSON(http.StatusOK, gin.H{"success": true})
+			return
+		}
+		log.Printf("❌ Webhook SePay: lỗi lưu payment cho hóa đơn %s: %v\n", refCode, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false})
+		return
+	}
+
+	if invoice.Status != models.InvoiceStatusPaid {
+		newPaidAmount := invoice.PaidAmount + payload.TransferAmount
+		newStatus := models.InvoiceStatusPartial
+		if newPaidAmount >= invoice.TotalAmount {
+			newStatus = models.InvoiceStatusPaid
+		}
+
+		_, err = invoicesCol.UpdateOne(ctx, bson.M{"_id": invoice.ID}, bson.M{
+			"$set": bson.M{
+				"paid_amount": newPaidAmount,
+				"status":      newStatus,
+				"updated_at":  time.Now(),
+			},
+		})
+		if err != nil {
+			log.Printf("❌ Webhook SePay: lưu payment thành công nhưng cập nhật hóa đơn %s thất bại: %v\n", refCode, err)
+			// Vẫn báo success cho SePay vì tiền + payment đã ghi nhận đúng; cần kiểm tra thủ công qua log.
+		}
+	}
+
+	log.Printf("✅ Webhook SePay: tự động ghi nhận thanh toán %.0f cho hóa đơn %s\n", payload.TransferAmount, refCode)
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// formatSepayTxnID chuẩn hóa transaction id của SePay thành string để lưu/so khớp.
+func formatSepayTxnID(id int64) string {
+	return "sepay_" + strconv.FormatInt(id, 10)
 }

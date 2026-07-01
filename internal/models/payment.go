@@ -21,10 +21,19 @@ type Payment struct {
 	RoomID    primitive.ObjectID `bson:"room_id" json:"room_id"`
 	TenantID  primitive.ObjectID `bson:"tenant_id" json:"tenant_id"`
 
-	Amount      float64       `bson:"amount" json:"amount"`
-	Method      PaymentMethod `bson:"method" json:"method"`
-	Note        string        `bson:"note,omitempty" json:"note,omitempty"`
-	ConfirmedBy primitive.ObjectID `bson:"confirmed_by" json:"confirmed_by"` // manager xác nhận
+	Amount      float64            `bson:"amount" json:"amount"`
+	Method      PaymentMethod      `bson:"method" json:"method"`
+	Note        string             `bson:"note,omitempty" json:"note,omitempty"`
+	ConfirmedBy primitive.ObjectID `bson:"confirmed_by" json:"confirmed_by"` // manager xác nhận; để trống (zero) nếu hệ thống tự xác nhận qua webhook
+
+	// IsAutoConfirmed: true nếu thanh toán này được hệ thống tự động ghi nhận qua
+	// webhook (SePay...), false nếu do manager tự tay ghi nhận.
+	IsAutoConfirmed bool `bson:"is_auto_confirmed" json:"is_auto_confirmed"`
+
+	// ExternalTransactionID: ID giao dịch phía nhà cung cấp webhook (SePay...),
+	// dùng để chống xử lý trùng khi webhook bị gửi lại (retry).
+	// Có index unique dạng sparse -> chỉ áp dụng cho các document có field này.
+	ExternalTransactionID string `bson:"external_transaction_id,omitempty" json:"external_transaction_id,omitempty"`
 
 	PaidAt    time.Time `bson:"paid_at" json:"paid_at"`
 	CreatedAt time.Time `bson:"created_at" json:"created_at"`
