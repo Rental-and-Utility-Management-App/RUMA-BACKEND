@@ -15,3 +15,7 @@ Room: mã phòng, giá thuê, trạng thái, người thuê hiện tại
 Invoice: hóa đơn theo tháng — tiền nhà + điện + nước, trạng thái (chưa/đã thanh toán)
 
 Payment: lịch sử thanh toán gắn với invoice
+
+# Run
+
+go run cmd/server/main.go
