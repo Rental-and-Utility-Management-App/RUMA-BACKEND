@@ -9,6 +9,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"rental-app/internal/config"
 	"rental-app/internal/models"
@@ -21,16 +22,66 @@ func NewInvoiceHandler() *InvoiceHandler {
 	return &InvoiceHandler{}
 }
 
+// resolveOldReadings quyết định chỉ số điện/nước cũ dùng để tính hóa đơn:
+//   - Nếu người dùng tự nhập (khác nil) -> dùng giá trị đó (ghi đè, vd: mới thay đồng hồ).
+//   - Nếu để trống -> lấy electric_new/water_new của hóa đơn gần nhất cùng phòng.
+//   - Nếu phòng chưa từng có hóa đơn nào -> mặc định 0 (hóa đơn đầu tiên).
+func resolveOldReadings(
+	ctx context.Context,
+	invoicesCol *mongo.Collection,
+	roomID primitive.ObjectID,
+	electricOldOverride *float64,
+	waterOldOverride *float64,
+) (electricOld float64, waterOld float64, err error) {
+	if electricOldOverride != nil {
+		electricOld = *electricOldOverride
+	}
+	if waterOldOverride != nil {
+		waterOld = *waterOldOverride
+	}
+
+	if electricOldOverride != nil && waterOldOverride != nil {
+		return electricOld, waterOld, nil
+	}
+
+	var lastInvoice models.Invoice
+	findErr := invoicesCol.FindOne(
+		ctx,
+		bson.M{"room_id": roomID},
+		options.FindOne().SetSort(bson.D{{Key: "year", Value: -1}, {Key: "month", Value: -1}}),
+	).Decode(&lastInvoice)
+
+	if findErr != nil {
+		if findErr == mongo.ErrNoDocuments {
+			// Phòng chưa có hóa đơn nào trước đó -> giữ mặc định 0 cho phần chưa override.
+			return electricOld, waterOld, nil
+		}
+		return 0, 0, findErr
+	}
+
+	if electricOldOverride == nil {
+		electricOld = lastInvoice.ElectricNew
+	}
+	if waterOldOverride == nil {
+		waterOld = lastInvoice.WaterNew
+	}
+
+	return electricOld, waterOld, nil
+}
+
 type createInvoiceRequest struct {
 	RoomID string `json:"room_id" binding:"required"`
 	Month  int    `json:"month" binding:"required,min=1,max=12"`
 	Year   int    `json:"year" binding:"required"`
 
-	ElectricOld float64 `json:"electric_old"`
-	ElectricNew float64 `json:"electric_new" binding:"required"`
+	// ElectricOld/WaterOld: để trống (null) để hệ thống TỰ ĐỘNG lấy chỉ số mới nhất
+	// (electric_new/water_new) của hóa đơn gần nhất cùng phòng làm chỉ số cũ tháng này.
+	// Chỉ cần nhập tay khi: hóa đơn đầu tiên của phòng, hoặc vừa thay đồng hồ điện/nước mới.
+	ElectricOld *float64 `json:"electric_old"`
+	ElectricNew float64  `json:"electric_new" binding:"required"`
 
-	WaterOld float64 `json:"water_old"`
-	WaterNew float64 `json:"water_new" binding:"required"`
+	WaterOld *float64 `json:"water_old"`
+	WaterNew float64  `json:"water_new" binding:"required"`
 
 	OtherFees float64 `json:"other_fees"`
 	OtherNote string  `json:"other_note"`
@@ -61,11 +112,11 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 		return
 	}
 
-	if req.ElectricNew < req.ElectricOld {
+	if req.ElectricOld != nil && req.ElectricNew < *req.ElectricOld {
 		utils.Error(c, http.StatusBadRequest, "Chỉ số điện mới không được nhỏ hơn chỉ số cũ")
 		return
 	}
-	if req.WaterNew < req.WaterOld {
+	if req.WaterOld != nil && req.WaterNew < *req.WaterOld {
 		utils.Error(c, http.StatusBadRequest, "Chỉ số nước mới không được nhỏ hơn chỉ số cũ")
 		return
 	}
@@ -100,8 +151,24 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 		return
 	}
 
-	electricAmount := (req.ElectricNew - req.ElectricOld) * room.ElectricPrice
-	waterAmount := (req.WaterNew - req.WaterOld) * room.WaterPrice
+	// Tự động lấy chỉ số cũ từ hóa đơn gần nhất của phòng (nếu người dùng không tự nhập).
+	electricOld, waterOld, err := resolveOldReadings(ctx, invoicesCol, roomID, req.ElectricOld, req.WaterOld)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	if req.ElectricNew < electricOld {
+		utils.Error(c, http.StatusBadRequest, "Chỉ số điện mới không được nhỏ hơn chỉ số cũ (đã tự động lấy từ hóa đơn trước)")
+		return
+	}
+	if req.WaterNew < waterOld {
+		utils.Error(c, http.StatusBadRequest, "Chỉ số nước mới không được nhỏ hơn chỉ số cũ (đã tự động lấy từ hóa đơn trước)")
+		return
+	}
+
+	electricAmount := (req.ElectricNew - electricOld) * room.ElectricPrice
+	waterAmount := (req.WaterNew - waterOld) * room.WaterPrice
 	totalAmount := room.MonthlyRent + electricAmount + waterAmount + req.OtherFees
 
 	dueDate := time.Now().AddDate(0, 0, 7)
@@ -121,12 +188,12 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 
 		RentAmount: room.MonthlyRent,
 
-		ElectricOld:    req.ElectricOld,
+		ElectricOld:    electricOld,
 		ElectricNew:    req.ElectricNew,
 		ElectricPrice:  room.ElectricPrice,
 		ElectricAmount: electricAmount,
 
-		WaterOld:    req.WaterOld,
+		WaterOld:    waterOld,
 		WaterNew:    req.WaterNew,
 		WaterPrice:  room.WaterPrice,
 		WaterAmount: waterAmount,

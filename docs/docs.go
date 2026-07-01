@@ -507,6 +507,44 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/rooms/{id}/checkout": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager xác nhận người thuê trả phòng: phòng chuyển về trạng thái trống (available),\ngỡ liên kết tenant khỏi phòng và gỡ phòng khỏi tài khoản tenant.\nHóa đơn/thanh toán cũ của tenant vẫn được giữ nguyên để tra cứu lịch sử.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Rooms"
+                ],
+                "summary": "Trả phòng",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Room ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/users": {
             "get": {
                 "security": [
@@ -693,6 +731,7 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "electric_old": {
+                    "description": "ElectricOld/WaterOld: để trống (null) để hệ thống TỰ ĐỘNG lấy chỉ số mới nhất\n(electric_new/water_new) của hóa đơn gần nhất cùng phòng làm chỉ số cũ tháng này.\nChỉ cần nhập tay khi: hóa đơn đầu tiên của phòng, hoặc vừa thay đồng hồ điện/nước mới.",
                     "type": "number"
                 },
                 "month": {

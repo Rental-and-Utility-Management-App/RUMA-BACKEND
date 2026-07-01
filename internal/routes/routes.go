@@ -70,6 +70,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 				roomsManagerOnly.POST("", roomHandler.CreateRoom)
 				roomsManagerOnly.PUT("/:id", roomHandler.UpdateRoom)
 				roomsManagerOnly.DELETE("/:id", roomHandler.DeleteRoom)
+				roomsManagerOnly.POST("/:id/checkout", roomHandler.CheckoutRoom)
 			}
 		}
 

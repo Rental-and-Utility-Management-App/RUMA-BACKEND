@@ -19,6 +19,10 @@ definitions:
       electric_new:
         type: number
       electric_old:
+        description: |-
+          ElectricOld/WaterOld: để trống (null) để hệ thống TỰ ĐỘNG lấy chỉ số mới nhất
+          (electric_new/water_new) của hóa đơn gần nhất cùng phòng làm chỉ số cũ tháng này.
+          Chỉ cần nhập tay khi: hóa đơn đầu tiên của phòng, hoặc vừa thay đồng hồ điện/nước mới.
         type: number
       month:
         maximum: 12
@@ -457,6 +461,33 @@ paths:
       security:
       - BearerAuth: []
       summary: Cập nhật thông tin phòng
+      tags:
+      - Rooms
+  /api/rooms/{id}/checkout:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Manager xác nhận người thuê trả phòng: phòng chuyển về trạng thái trống (available),
+        gỡ liên kết tenant khỏi phòng và gỡ phòng khỏi tài khoản tenant.
+        Hóa đơn/thanh toán cũ của tenant vẫn được giữ nguyên để tra cứu lịch sử.
+      parameters:
+      - description: Room ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Trả phòng
       tags:
       - Rooms
   /api/users:

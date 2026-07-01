@@ -286,3 +286,70 @@ func (h *RoomHandler) DeleteRoom(c *gin.Context) {
 
 	utils.Success(c, http.StatusOK, "Xóa phòng thành công", nil)
 }
+
+// CheckoutRoom godoc
+// @Summary Trả phòng
+// @Description Manager xác nhận người thuê trả phòng: phòng chuyển về trạng thái trống (available),
+// @Description gỡ liên kết tenant khỏi phòng và gỡ phòng khỏi tài khoản tenant.
+// @Description Hóa đơn/thanh toán cũ của tenant vẫn được giữ nguyên để tra cứu lịch sử.
+// @Tags Rooms
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Room ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/rooms/{id}/checkout [post]
+func (h *RoomHandler) CheckoutRoom(c *gin.Context) {
+	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	roomsCol := config.GetCollection("rooms")
+
+	var room models.Room
+	if err := roomsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&room); err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	if room.TenantID == nil {
+		utils.Error(c, http.StatusConflict, "Phòng hiện đang trống, không có người thuê để trả phòng")
+		return
+	}
+
+	tenantID := *room.TenantID
+
+	_, err = roomsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
+		"$set":   bson.M{"status": models.RoomStatusAvailable, "updated_at": time.Now()},
+		"$unset": bson.M{"tenant_id": ""},
+	})
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật phòng")
+		return
+	}
+
+	usersCol := config.GetCollection("users")
+	_, err = usersCol.UpdateOne(ctx, bson.M{"_id": tenantID}, bson.M{
+		"$set":   bson.M{"updated_at": time.Now()},
+		"$unset": bson.M{"room_id": ""},
+	})
+	if err != nil {
+		// Phòng đã được trả nhưng gỡ liên kết ở tài khoản tenant thất bại -> báo rõ để manager kiểm tra lại thủ công.
+		utils.Error(c, http.StatusInternalServerError, "Trả phòng thành công nhưng cập nhật tài khoản người thuê thất bại")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Trả phòng thành công", gin.H{
+		"room_id":   id,
+		"tenant_id": tenantID,
+	})
+}
