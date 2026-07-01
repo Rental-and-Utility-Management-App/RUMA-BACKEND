@@ -25,6 +25,10 @@ type Config struct {
 	BankAccountNo   string // Số tài khoản nhận tiền
 	BankAccountName string // Tên chủ tài khoản (KHÔNG dấu, IN HOA - đúng như trên thẻ/tài khoản)
 	VietQRTemplate  string // Kiểu giao diện QR: compact2 | compact | qr_only | print
+
+	// API Key để xác thực webhook gọi đến từ SePay (cấu hình cùng giá trị bên my.sepay.vn).
+	// Để trống -> webhook bị từ chối hoàn toàn (an toàn theo mặc định, không cho phép bỏ qua xác thực).
+	SepayWebhookAPIKey string
 }
 
 func Load() *Config {
@@ -56,6 +60,8 @@ func Load() *Config {
 		BankAccountNo:   getEnv("BANK_ACCOUNT_NO", ""),
 		BankAccountName: getEnv("BANK_ACCOUNT_NAME", ""),
 		VietQRTemplate:  getEnv("VIETQR_TEMPLATE", "compact2"),
+
+		SepayWebhookAPIKey: getEnv("SEPAY_WEBHOOK_API_KEY", ""),
 	}
 }
 

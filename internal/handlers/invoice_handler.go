@@ -193,8 +193,9 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 		}
 	}
 
+	invoiceID := primitive.NewObjectID()
 	invoice := models.Invoice{
-		ID:       primitive.NewObjectID(),
+		ID:       invoiceID,
 		RoomID:   roomID,
 		TenantID: *room.TenantID,
 
@@ -223,6 +224,8 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 		TotalAmount: totalAmount,
 		PaidAmount:  0,
 		Status:      models.InvoiceStatusUnpaid,
+
+		PaymentRefCode: utils.GenerateInvoiceRefCode(invoiceID),
 
 		DueDate:   dueDate,
 		CreatedAt: time.Now(),
@@ -389,6 +392,17 @@ func (h *InvoiceHandler) GetInvoiceQRCode(c *gin.Context) {
 		return
 	}
 
+	// Hóa đơn tạo trước khi có tính năng đối soát tự động sẽ chưa có ref code -> sinh và lưu lại (backfill).
+	if invoice.PaymentRefCode == "" {
+		invoice.PaymentRefCode = utils.GenerateInvoiceRefCode(invoice.ID)
+		if _, err := invoicesCol.UpdateOne(ctx, bson.M{"_id": invoice.ID}, bson.M{
+			"$set": bson.M{"payment_ref_code": invoice.PaymentRefCode, "updated_at": time.Now()},
+		}); err != nil {
+			utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+			return
+		}
+	}
+
 	roomsCol := config.GetCollection("rooms")
 	var room models.Room
 	roomCode := ""
@@ -396,9 +410,11 @@ func (h *InvoiceHandler) GetInvoiceQRCode(c *gin.Context) {
 		roomCode = room.Code
 	}
 
-	addInfo := fmt.Sprintf("Thanh toan P%s T%d-%d", roomCode, invoice.Month, invoice.Year)
+	// Ref code luôn đứng đầu nội dung để tối đa khả năng ngân hàng giữ nguyên,
+	// giúp webhook đối soát tự động khớp đúng hóa đơn.
+	addInfo := fmt.Sprintf("%s Thanh toan P%s T%d-%d", invoice.PaymentRefCode, roomCode, invoice.Month, invoice.Year)
 	if roomCode == "" {
-		addInfo = fmt.Sprintf("Thanh toan hoa don T%d-%d", invoice.Month, invoice.Year)
+		addInfo = fmt.Sprintf("%s Thanh toan hoa don T%d-%d", invoice.PaymentRefCode, invoice.Month, invoice.Year)
 	}
 
 	qrURL := utils.BuildVietQRImageURL(utils.VietQRParams{
@@ -411,12 +427,13 @@ func (h *InvoiceHandler) GetInvoiceQRCode(c *gin.Context) {
 	})
 
 	utils.Success(c, http.StatusOK, "OK", gin.H{
-		"invoice_id":   invoice.ID,
-		"amount":       remaining,
-		"add_info":     utils.RemoveVietnameseTones(addInfo),
-		"bank_id":      h.cfg.BankID,
-		"account_no":   h.cfg.BankAccountNo,
-		"account_name": h.cfg.BankAccountName,
-		"qr_code_url":  qrURL,
+		"invoice_id":       invoice.ID,
+		"payment_ref_code": invoice.PaymentRefCode,
+		"amount":           remaining,
+		"add_info":         utils.RemoveVietnameseTones(addInfo),
+		"bank_id":          h.cfg.BankID,
+		"account_no":       h.cfg.BankAccountNo,
+		"account_name":     h.cfg.BankAccountName,
+		"qr_code_url":      qrURL,
 	})
 }

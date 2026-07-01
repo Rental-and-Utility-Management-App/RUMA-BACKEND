@@ -3,8 +3,35 @@ package utils
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
+
+// invoiceRefCodePattern nhận diện mã tham chiếu hóa đơn dạng "HD" + 8 ký tự hex,
+// dùng để bóc tách từ nội dung chuyển khoản do webhook SePay gửi về.
+var invoiceRefCodePattern = regexp.MustCompile(`(?i)HD[0-9A-F]{8}`)
+
+// GenerateInvoiceRefCode sinh mã tham chiếu ngắn, duy nhất cho 1 hóa đơn, dùng làm
+// nội dung chuyển khoản để đối soát tự động khi có webhook báo tiền về (SePay/Casso...).
+// Dạng: "HD" + 8 ký tự hex cuối của ObjectID, in hoa. Vd: "HDA1B2C3D4"... (thực tế 8 ký tự).
+func GenerateInvoiceRefCode(id primitive.ObjectID) string {
+	hex := id.Hex()
+	suffix := hex[len(hex)-8:]
+	return "HD" + strings.ToUpper(suffix)
+}
+
+// ExtractInvoiceRefCode bóc tách mã tham chiếu hóa đơn (nếu có) từ 1 đoạn text
+// (nội dung/diễn giải giao dịch ngân hàng). Trả về mã đã chuẩn hóa IN HOA và true
+// nếu tìm thấy, ngược lại trả về "" và false.
+func ExtractInvoiceRefCode(text string) (string, bool) {
+	match := invoiceRefCodePattern.FindString(text)
+	if match == "" {
+		return "", false
+	}
+	return strings.ToUpper(match), true
+}
 
 // vietnameseToneMap ánh xạ ký tự có dấu tiếng Việt -> không dấu.
 // Nội dung chuyển khoản (addInfo) nên bỏ dấu vì một số app ngân hàng

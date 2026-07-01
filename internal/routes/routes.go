@@ -45,7 +45,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 	userHandler := handlers.NewUserHandler()
 	roomHandler := handlers.NewRoomHandler()
 	invoiceHandler := handlers.NewInvoiceHandler(cfg)
-	paymentHandler := handlers.NewPaymentHandler()
+	paymentHandler := handlers.NewPaymentHandler(cfg)
 
 	// Rate limit riêng cho login: tối đa 5 lần thử/phút theo từng IP, chống brute-force.
 	loginLimiter := middleware.NewRateLimiter(5, time.Minute)
@@ -56,6 +56,13 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 	auth := api.Group("/auth")
 	{
 		auth.POST("/login", loginLimiter.Middleware(), authHandler.Login)
+	}
+
+	// Webhook nhận báo giao dịch từ SePay - không qua JWT (bên thứ 3 gọi vào),
+	// tự xác thực bằng API Key riêng (xem SepayWebhook handler).
+	webhooks := api.Group("/webhooks")
+	{
+		webhooks.POST("/sepay", paymentHandler.SepayWebhook)
 	}
 
 	// ---- Protected routes (cần JWT) ----
