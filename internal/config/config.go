@@ -19,6 +19,12 @@ type Config struct {
 	JWTSecret      string
 	JWTExpireHours int
 	AllowedOrigins []string // danh sách origin được phép gọi API (CORS)
+
+	// Thông tin tài khoản ngân hàng dùng để tự sinh mã VietQR chuyển khoản.
+	BankID          string // Mã ngân hàng theo chuẩn VietQR (BIN hoặc mã ngắn), vd: "970436" hoặc "VCB"
+	BankAccountNo   string // Số tài khoản nhận tiền
+	BankAccountName string // Tên chủ tài khoản (KHÔNG dấu, IN HOA - đúng như trên thẻ/tài khoản)
+	VietQRTemplate  string // Kiểu giao diện QR: compact2 | compact | qr_only | print
 }
 
 func Load() *Config {
@@ -45,6 +51,11 @@ func Load() *Config {
 		JWTSecret:      jwtSecret,
 		JWTExpireHours: expireHours,
 		AllowedOrigins: allowedOrigins,
+
+		BankID:          getEnv("BANK_ID", ""),
+		BankAccountNo:   getEnv("BANK_ACCOUNT_NO", ""),
+		BankAccountName: getEnv("BANK_ACCOUNT_NAME", ""),
+		VietQRTemplate:  getEnv("VIETQR_TEMPLATE", "compact2"),
 	}
 }
 

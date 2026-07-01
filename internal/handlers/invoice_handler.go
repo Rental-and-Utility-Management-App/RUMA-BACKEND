@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -16,10 +17,12 @@ import (
 	"rental-app/internal/utils"
 )
 
-type InvoiceHandler struct{}
+type InvoiceHandler struct {
+	cfg *config.Config
+}
 
-func NewInvoiceHandler() *InvoiceHandler {
-	return &InvoiceHandler{}
+func NewInvoiceHandler(cfg *config.Config) *InvoiceHandler {
+	return &InvoiceHandler{cfg: cfg}
 }
 
 // resolveOldReadings quyết định chỉ số điện/nước cũ dùng để tính hóa đơn:
@@ -330,4 +333,90 @@ func (h *InvoiceHandler) GetInvoice(c *gin.Context) {
 	}
 
 	utils.Success(c, http.StatusOK, "OK", invoice)
+}
+
+// GetInvoiceQRCode godoc
+// @Summary Lấy mã QR chuyển khoản cho hóa đơn
+// @Description Sinh mã VietQR (chuyển khoản ngân hàng) với số tiền = số tiền còn lại của hóa đơn,
+// @Description nội dung chuyển khoản tự động điền theo mã phòng + tháng/năm.
+// @Description Cần cấu hình BANK_ID, BANK_ACCOUNT_NO, BANK_ACCOUNT_NAME trong biến môi trường.
+// @Tags Invoices
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/invoices/{id}/qr-code [get]
+func (h *InvoiceHandler) GetInvoiceQRCode(c *gin.Context) {
+	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	invoicesCol := config.GetCollection("invoices")
+	var invoice models.Invoice
+	if err := invoicesCol.FindOne(ctx, bson.M{"_id": id}).Decode(&invoice); err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hóa đơn")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	// Tenant chỉ được lấy QR của hóa đơn chính mình
+	role := c.GetString("role")
+	if role == string(models.RoleTenant) {
+		userIDStr := c.GetString("user_id")
+		if invoice.TenantID.Hex() != userIDStr {
+			utils.Error(c, http.StatusForbidden, "Bạn không có quyền xem hóa đơn này")
+			return
+		}
+	}
+
+	remaining := invoice.TotalAmount - invoice.PaidAmount
+	if remaining <= 0 {
+		utils.Error(c, http.StatusConflict, "Hóa đơn này đã được thanh toán đầy đủ")
+		return
+	}
+
+	if h.cfg.BankID == "" || h.cfg.BankAccountNo == "" {
+		utils.Error(c, http.StatusServiceUnavailable, "Chưa cấu hình tài khoản ngân hàng (BANK_ID, BANK_ACCOUNT_NO) để tạo mã QR")
+		return
+	}
+
+	roomsCol := config.GetCollection("rooms")
+	var room models.Room
+	roomCode := ""
+	if err := roomsCol.FindOne(ctx, bson.M{"_id": invoice.RoomID}).Decode(&room); err == nil {
+		roomCode = room.Code
+	}
+
+	addInfo := fmt.Sprintf("Thanh toan P%s T%d-%d", roomCode, invoice.Month, invoice.Year)
+	if roomCode == "" {
+		addInfo = fmt.Sprintf("Thanh toan hoa don T%d-%d", invoice.Month, invoice.Year)
+	}
+
+	qrURL := utils.BuildVietQRImageURL(utils.VietQRParams{
+		BankID:      h.cfg.BankID,
+		AccountNo:   h.cfg.BankAccountNo,
+		AccountName: h.cfg.BankAccountName,
+		Template:    h.cfg.VietQRTemplate,
+		Amount:      remaining,
+		AddInfo:     addInfo,
+	})
+
+	utils.Success(c, http.StatusOK, "OK", gin.H{
+		"invoice_id":   invoice.ID,
+		"amount":       remaining,
+		"add_info":     utils.RemoveVietnameseTones(addInfo),
+		"bank_id":      h.cfg.BankID,
+		"account_no":   h.cfg.BankAccountNo,
+		"account_name": h.cfg.BankAccountName,
+		"qr_code_url":  qrURL,
+	})
 }

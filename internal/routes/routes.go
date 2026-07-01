@@ -44,7 +44,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 	authHandler := handlers.NewAuthHandler(cfg)
 	userHandler := handlers.NewUserHandler()
 	roomHandler := handlers.NewRoomHandler()
-	invoiceHandler := handlers.NewInvoiceHandler()
+	invoiceHandler := handlers.NewInvoiceHandler(cfg)
 	paymentHandler := handlers.NewPaymentHandler()
 
 	// Rate limit riêng cho login: tối đa 5 lần thử/phút theo từng IP, chống brute-force.
@@ -96,6 +96,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 		{
 			invoices.GET("", invoiceHandler.ListInvoices)
 			invoices.GET("/:id", invoiceHandler.GetInvoice)
+			invoices.GET("/:id/qr-code", invoiceHandler.GetInvoiceQRCode)
 
 			invoicesManagerOnly := invoices.Group("")
 			invoicesManagerOnly.Use(middleware.RequireRole(string(models.RoleManager)))
