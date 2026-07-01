@@ -15,3 +15,13 @@ Payment: lịch sử thanh toán gắn với invoice
 
 go run cmd/server/main.go
 http://localhost:8080/swagger/index.html
+
+# Run bằng Docker (khuyến nghị - tự kèm MongoDB)
+
+docker compose up --build
+http://localhost:8080/swagger/index.html
+http://localhost:8080/healthz
+
+Sửa biến môi trường (JWT_SECRET, MONGO_URI...) trong `docker-compose.yml` hoặc file `.env`
+(xem mẫu ở `.env.example`) trước khi deploy thật. Khi deploy production, set `APP_ENV=production`
+và `JWT_SECRET` là chuỗi ngẫu nhiên ≥32 ký tự — app sẽ từ chối khởi động nếu thiếu.
