@@ -14,3 +14,4 @@ Payment: lịch sử thanh toán gắn với invoice
 # Run
 
 go run cmd/server/main.go
+http://localhost:8080/swagger/index.html

@@ -28,7 +28,15 @@ type loginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
-// POST /api/auth/login - dùng chung cho cả manager và tenant
+// Login godoc
+// @Summary Đăng nhập
+// @Description Đăng nhập chung cho cả Manager và Tenant, trả về JWT token.
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param request body loginRequest true "Thông tin đăng nhập"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req loginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -73,7 +81,15 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	})
 }
 
-// GET /api/auth/me - lấy thông tin user đang đăng nhập
+// Me godoc
+// @Summary Lấy thông tin bản thân
+// @Description Lấy thông tin user đang đăng nhập (từ JWT token).
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Router /api/auth/me [get]
 func (h *AuthHandler) Me(c *gin.Context) {
 	userIDStr := c.GetString("user_id")
 	userID, err := primitive.ObjectIDFromHex(userIDStr)
@@ -100,7 +116,16 @@ type changePasswordRequest struct {
 	NewPassword string `json:"new_password" binding:"required,min=6"`
 }
 
-// PUT /api/auth/change-password
+// ChangePassword godoc
+// @Summary Đổi mật khẩu
+// @Description Đổi mật khẩu cho user đang đăng nhập.
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body changePasswordRequest true "Mật khẩu cũ và mới"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/auth/change-password [put]
 func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	var req changePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

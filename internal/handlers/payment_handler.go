@@ -29,7 +29,16 @@ type createPaymentRequest struct {
 	PaidAt    string  `json:"paid_at"` // format: 2006-01-02, mặc định là hôm nay
 }
 
-// POST /api/payments - manager ghi nhận 1 lần thanh toán cho hóa đơn
+// CreatePayment godoc
+// @Summary Ghi nhận thanh toán
+// @Description Manager ghi nhận 1 lần thanh toán cho hóa đơn.
+// @Tags Payments
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body createPaymentRequest true "Thông tin thanh toán"
+// @Success 201 {object} map[string]interface{}
+// @Router /api/payments [post]
 func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 	var req createPaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -129,7 +138,16 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 	})
 }
 
-// GET /api/payments - manager xem tất cả, tenant xem của mình. Lọc theo invoice_id
+// ListPayments godoc
+// @Summary Danh sách thanh toán
+// @Description Manager xem tất cả, Tenant chỉ xem của mình. Có thể lọc theo invoice_id.
+// @Tags Payments
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param invoice_id query string false "Lọc theo hóa đơn"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/payments [get]
 func (h *PaymentHandler) ListPayments(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
