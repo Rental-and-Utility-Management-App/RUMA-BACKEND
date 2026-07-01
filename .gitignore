@@ -1,0 +1,42 @@
+# ---- Môi trường & Bảo mật ----
+.env
+.env.*
+!.env.example
+
+# ---- Go Binaries & Thực thi ----
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+/main
+
+# ---- Go Test & Phân tích lỗi ----
+*.test
+*.out
+*.prof
+*.cgo1.go
+*.cgo2.c
+_cgo_defun.c
+_cgo_gotypes.go
+_cgo_export.*
+_testmain.go
+
+# ---- Cấu hình IDE / Text Editor ----
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---- Hệ điều hành ----
+.DS_Store
+Thumbs.db
+
+# ---- Docker (Nếu có build image) ----
+.docker/
+docker-compose.override.yml
+
+# ---- File Logs ----
+logs/
+*.log
