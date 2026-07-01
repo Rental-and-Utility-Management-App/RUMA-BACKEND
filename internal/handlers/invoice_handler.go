@@ -86,6 +86,11 @@ type createInvoiceRequest struct {
 	OtherFees float64 `json:"other_fees"`
 	OtherNote string  `json:"other_note"`
 
+	// Occupants: để trống (null) để hệ thống tự lấy số người hiện tại của phòng
+	// (room.occupants). Chỉ cần nhập tay nếu tháng này số người ở khác với
+	// số đang lưu trên phòng (vd: có người mới dọn vào/ra giữa tháng).
+	Occupants *int `json:"occupants"`
+
 	DueDate string `json:"due_date"` // format: 2006-01-02
 }
 
@@ -169,7 +174,14 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 
 	electricAmount := (req.ElectricNew - electricOld) * room.ElectricPrice
 	waterAmount := (req.WaterNew - waterOld) * room.WaterPrice
-	totalAmount := room.MonthlyRent + electricAmount + waterAmount + req.OtherFees
+
+	occupants := room.Occupants
+	if req.Occupants != nil {
+		occupants = *req.Occupants
+	}
+	managementFeeAmount := float64(occupants) * room.ManagementFeePerPerson
+
+	totalAmount := room.MonthlyRent + electricAmount + waterAmount + managementFeeAmount + req.OtherFees
 
 	dueDate := time.Now().AddDate(0, 0, 7)
 	if req.DueDate != "" {
@@ -200,6 +212,10 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 
 		OtherFees: req.OtherFees,
 		OtherNote: req.OtherNote,
+
+		Occupants:              occupants,
+		ManagementFeePerPerson: room.ManagementFeePerPerson,
+		ManagementFeeAmount:    managementFeeAmount,
 
 		TotalAmount: totalAmount,
 		PaidAmount:  0,

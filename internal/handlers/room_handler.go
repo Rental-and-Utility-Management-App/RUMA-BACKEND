@@ -22,13 +22,15 @@ func NewRoomHandler() *RoomHandler {
 }
 
 type createRoomRequest struct {
-	Code          string  `json:"code" binding:"required"`
-	Name          string  `json:"name"`
-	Floor         int     `json:"floor"`
-	MonthlyRent   float64 `json:"monthly_rent" binding:"required"`
-	ElectricPrice float64 `json:"electric_price" binding:"required"`
-	WaterPrice    float64 `json:"water_price" binding:"required"`
-	Note          string  `json:"note"`
+	Code                   string  `json:"code" binding:"required"`
+	Name                   string  `json:"name"`
+	Floor                  int     `json:"floor"`
+	MonthlyRent            float64 `json:"monthly_rent" binding:"required"`
+	ElectricPrice          float64 `json:"price_electricity" binding:"required"`
+	WaterPrice             float64 `json:"price_water" binding:"required"`
+	Occupants              int     `json:"occupants"`
+	ManagementFeePerPerson float64 `json:"management_fee_per_person"`
+	Note                   string  `json:"note"`
 }
 
 // CreateRoom godoc
@@ -64,17 +66,19 @@ func (h *RoomHandler) CreateRoom(c *gin.Context) {
 	}
 
 	room := models.Room{
-		ID:            primitive.NewObjectID(),
-		Code:          req.Code,
-		Name:          req.Name,
-		Floor:         req.Floor,
-		MonthlyRent:   req.MonthlyRent,
-		ElectricPrice: req.ElectricPrice,
-		WaterPrice:    req.WaterPrice,
-		Status:        models.RoomStatusAvailable,
-		Note:          req.Note,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
+		ID:                     primitive.NewObjectID(),
+		Code:                   req.Code,
+		Name:                   req.Name,
+		Floor:                  req.Floor,
+		MonthlyRent:            req.MonthlyRent,
+		ElectricPrice:          req.ElectricPrice,
+		WaterPrice:             req.WaterPrice,
+		Occupants:              req.Occupants,
+		ManagementFeePerPerson: req.ManagementFeePerPerson,
+		Status:                 models.RoomStatusAvailable,
+		Note:                   req.Note,
+		CreatedAt:              time.Now(),
+		UpdatedAt:              time.Now(),
 	}
 
 	if _, err := roomsCol.InsertOne(ctx, room); err != nil {
@@ -174,13 +178,15 @@ func (h *RoomHandler) GetRoom(c *gin.Context) {
 
 // Sửa Note thành con trỏ *string để có thể xóa trắng ghi chú
 type updateRoomRequest struct {
-	Name          string   `json:"name"`
-	Floor         *int     `json:"floor"`
-	MonthlyRent   *float64 `json:"monthly_rent"`
-	ElectricPrice *float64 `json:"electric_price"`
-	WaterPrice    *float64 `json:"water_price"`
-	Status        string   `json:"status"`
-	Note          *string  `json:"note"`
+	Name                   string   `json:"name"`
+	Floor                  *int     `json:"floor"`
+	MonthlyRent            *float64 `json:"monthly_rent"`
+	ElectricPrice          *float64 `json:"price_electricity"`
+	WaterPrice             *float64 `json:"price_water"`
+	Occupants              *int     `json:"occupants"`
+	ManagementFeePerPerson *float64 `json:"management_fee_per_person"`
+	Status                 string   `json:"status"`
+	Note                   *string  `json:"note"`
 }
 
 // UpdateRoom godoc
@@ -218,10 +224,16 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 		update["monthly_rent"] = *req.MonthlyRent
 	}
 	if req.ElectricPrice != nil {
-		update["electric_price"] = *req.ElectricPrice
+		update["price_electricity"] = *req.ElectricPrice
 	}
 	if req.WaterPrice != nil {
-		update["water_price"] = *req.WaterPrice
+		update["price_water"] = *req.WaterPrice
+	}
+	if req.Occupants != nil {
+		update["occupants"] = *req.Occupants
+	}
+	if req.ManagementFeePerPerson != nil {
+		update["management_fee_per_person"] = *req.ManagementFeePerPerson
 	}
 	if req.Status != "" {
 		update["status"] = req.Status

@@ -25,9 +25,9 @@ type Invoice struct {
 
 	RentAmount float64 `bson:"rent_amount" json:"rent_amount"`
 
-	ElectricOld   float64 `bson:"electric_old" json:"electric_old"` // chỉ số cũ
-	ElectricNew   float64 `bson:"electric_new" json:"electric_new"` // chỉ số mới
-	ElectricPrice float64 `bson:"electric_price" json:"electric_price"`
+	ElectricOld    float64 `bson:"electric_old" json:"electric_old"` // chỉ số cũ
+	ElectricNew    float64 `bson:"electric_new" json:"electric_new"` // chỉ số mới
+	ElectricPrice  float64 `bson:"electric_price" json:"electric_price"`
 	ElectricAmount float64 `bson:"electric_amount" json:"electric_amount"` // = (new-old)*price
 
 	WaterOld    float64 `bson:"water_old" json:"water_old"`
@@ -35,8 +35,12 @@ type Invoice struct {
 	WaterPrice  float64 `bson:"water_price" json:"water_price"`
 	WaterAmount float64 `bson:"water_amount" json:"water_amount"`
 
-	OtherFees  float64 `bson:"other_fees,omitempty" json:"other_fees,omitempty"` // phí khác: rác, internet...
-	OtherNote  string  `bson:"other_note,omitempty" json:"other_note,omitempty"`
+	OtherFees float64 `bson:"other_fees,omitempty" json:"other_fees,omitempty"` // phí khác: rác, internet...
+	OtherNote string  `bson:"other_note,omitempty" json:"other_note,omitempty"`
+
+	Occupants              int     `bson:"occupants" json:"occupants"`                                 // số người ở phòng tại thời điểm chốt hóa đơn
+	ManagementFeePerPerson float64 `bson:"management_fee_per_person" json:"management_fee_per_person"` // đơn giá phí quản lý/người dùng để tính tháng này
+	ManagementFeeAmount    float64 `bson:"management_fee_amount" json:"management_fee_amount"`         // = occupants * management_fee_per_person
 
 	TotalAmount float64       `bson:"total_amount" json:"total_amount"`
 	PaidAmount  float64       `bson:"paid_amount" json:"paid_amount"`
