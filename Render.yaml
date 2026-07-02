@@ -1,0 +1,64 @@
+# Render Blueprint cho RUMA-BACKEND.
+#
+# Cách dùng:
+#   1. Đặt file này ở ROOT của repo (cùng cấp với go.mod, Dockerfile).
+#   2. Push lên GitHub.
+#   3. Vào Render Dashboard -> New -> Blueprint -> chọn repo này.
+#   4. Render sẽ đọc file này và hỏi bạn nhập giá trị cho các biến có "sync: false"
+#      (đây là các giá trị nhạy cảm, không lưu thẳng trong file/git).
+#
+# Tài liệu: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: ruma-backend
+    runtime: docker
+    plan: free # Free tier: 512MB RAM, service sẽ "ngủ" sau 15 phút không có request
+    region: singapore # Gần Việt Nam nhất trong các region của Render -> độ trễ thấp hơn
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz # Khớp với endpoint đã có trong routes.go
+    autoDeployTrigger: commit # Tự deploy lại mỗi khi push code lên nhánh liên kết
+
+    envVars:
+      - key: APP_ENV
+        value: production
+
+      - key: PORT
+        value: "8080"
+
+      # --- MongoDB ---
+      # Render không có MongoDB managed sẵn (chỉ có Postgres) -> dùng MongoDB Atlas free
+      # (M0 cluster) rồi dán connection string vào đây khi Render hỏi lúc tạo Blueprint.
+      # Dạng: mongodb+srv://<user>:<password>@<cluster>.mongodb.net/?retryWrites=true&w=majority
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DB_NAME
+        value: rental_app
+
+      # --- JWT ---
+      # generateValue: true -> Render tự sinh 1 chuỗi random 256-bit, không cần tự nghĩ secret.
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRE_HOURS
+        value: "72"
+
+      # --- CORS ---
+      # Đổi thành domain thật của frontend khi có, vd: https://app.rumatro.com
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+
+      # --- VietQR (thông tin tài khoản ngân hàng nhận tiền) ---
+      - key: BANK_ID
+        sync: false
+      - key: BANK_ACCOUNT_NO
+        sync: false
+      - key: BANK_ACCOUNT_NAME
+        sync: false
+      - key: VIETQR_TEMPLATE
+        value: compact2
+
+      # --- SePay webhook ---
+      # Lấy từ my.sepay.vn sau khi tạo webhook, dán vào đây.
+      - key: SEPAY_WEBHOOK_API_KEY
+        sync: false
