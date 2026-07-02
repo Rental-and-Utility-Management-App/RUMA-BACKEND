@@ -7,8 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	// 1. Thêm 3 thư viện này của Swagger
-	_ "rental-app/docs" // CỰC KỲ QUAN TRỌNG: Import thư mục docs do lệnh 'swag init' sinh ra
+	_ "rental-app/docs"
 
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"

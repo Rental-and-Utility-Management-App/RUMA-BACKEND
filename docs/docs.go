@@ -127,6 +127,389 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/contracts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager xem tất cả (lọc được theo room_id, status). Tenant chỉ xem hợp đồng của mình.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Contracts"
+                ],
+                "summary": "Danh sách hợp đồng",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Lọc theo phòng",
+                        "name": "room_id",
+                        "in": "query",
+                        "required": false
+                    },
+                    {
+                        "type": "string",
+                        "description": "Lọc theo trạng thái (active|ended|terminated|cancelled)",
+                        "name": "status",
+                        "in": "query",
+                        "required": false
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager tạo hợp đồng thuê cho 1 nhóm tenant vào 1 phòng: gán tenant vào phòng, khởi tạo thông tin cọc/thời hạn. Phòng đích không được có hợp đồng \"active\" khác, và tenant không được đang thuộc phòng nào khác.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Contracts"
+                ],
+                "summary": "Tạo hợp đồng thuê mới (checkin)",
+                "parameters": [
+                    {
+                        "description": "Thông tin hợp đồng",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.createContractRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/contracts/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Contracts"
+                ],
+                "summary": "Xem chi tiết hợp đồng",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Contract ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sửa ghi chú/giá thuê/tiền cọc thỏa thuận (deposit_amount chỉ sửa được khi chưa thu cọc). Để đổi ngày hết hạn, dùng endpoint gia hạn (/extend). Để kết thúc hợp đồng, dùng /checkout.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Contracts"
+                ],
+                "summary": "Cập nhật thông tin hợp đồng",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Contract ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Dữ liệu cập nhật",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.updateContractRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/contracts/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Chỉ hủy được khi hợp đồng đang active VÀ chưa thu đồng cọc nào. Nếu đã thu cọc, phải dùng /checkout để hoàn/giữ cọc đúng quy trình.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Contracts"
+                ],
+                "summary": "Hủy hợp đồng (ký nhầm / đổi ý, chưa thu cọc)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Contract ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/contracts/{id}/checkout": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager xác nhận tenant trả phòng: đóng hợp đồng (ended nếu tới/qua hạn, terminated nếu chấm dứt sớm), hoàn cọc theo refund_amount (có thể giữ lại 1 phần), gỡ toàn bộ tenant của hợp đồng khỏi phòng.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Contracts"
+                ],
+                "summary": "Checkout / kết thúc hợp đồng",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Contract ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Thông tin checkout",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.checkoutContractRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/contracts/{id}/collect-deposit": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager ghi nhận 1 lần thu cọc (có thể thu nhiều lần cho tới khi đủ deposit_amount).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Contracts"
+                ],
+                "summary": "Thu tiền cọc",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Contract ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Thông tin thu cọc",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.collectDepositRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/contracts/{id}/deposit-transactions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Contracts"
+                ],
+                "summary": "Lịch sử thu/hoàn/giữ cọc của 1 hợp đồng",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Contract ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/contracts/{id}/extend": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager gia hạn hợp đồng đang active, đẩy end_date ra xa hơn. Lịch sử gia hạn được lưu lại trong renewals để tra cứu.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Contracts"
+                ],
+                "summary": "Gia hạn hợp đồng",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Contract ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Thông tin gia hạn",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.extendContractRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/invoices": {
             "get": {
                 "security": [
@@ -713,6 +1096,79 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.checkoutContractRequest": {
+            "type": "object",
+            "properties": {
+                "actual_end_date": {
+                    "type": "string"
+                },
+                "deduction_note": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "refund_amount": {
+                    "type": "number"
+                },
+                "refund_method": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.collectDepositRequest": {
+            "type": "object",
+            "required": [
+                "amount",
+                "method"
+            ],
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.createContractRequest": {
+            "type": "object",
+            "required": [
+                "end_date",
+                "room_id",
+                "start_date",
+                "tenant_ids"
+            ],
+            "properties": {
+                "deposit_amount": {
+                    "type": "number"
+                },
+                "end_date": {
+                    "type": "string"
+                },
+                "monthly_rent": {
+                    "type": "number"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "room_id": {
+                    "type": "string"
+                },
+                "start_date": {
+                    "type": "string"
+                },
+                "tenant_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "handlers.createInvoiceRequest": {
             "type": "object",
             "required": [
@@ -845,6 +1301,23 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.extendContractRequest": {
+            "type": "object",
+            "required": [
+                "new_end_date"
+            ],
+            "properties": {
+                "new_end_date": {
+                    "type": "string"
+                },
+                "new_monthly_rent": {
+                    "type": "number"
+                },
+                "note": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.loginRequest": {
             "type": "object",
             "required": [
@@ -856,6 +1329,20 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "phone": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.updateContractRequest": {
+            "type": "object",
+            "properties": {
+                "deposit_amount": {
+                    "type": "number"
+                },
+                "monthly_rent": {
+                    "type": "number"
+                },
+                "note": {
                     "type": "string"
                 }
             }
