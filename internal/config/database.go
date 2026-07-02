@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -72,6 +73,36 @@ func ensureIndexes(ctx context.Context) {
 	})
 	if err != nil {
 		log.Println("Cảnh báo tạo index payments.external_transaction_id:", err)
+	}
+
+	// Partial unique index: đảm bảo ở tầng DB rằng 1 phòng chỉ có tối đa 1
+	// hợp đồng "active" tại 1 thời điểm (chặn race-condition, không chỉ dựa
+	// vào check ở tầng handler). Các hợp đồng ended/terminated/cancelled
+	// không bị ràng buộc unique này nên 1 phòng vẫn có thể có nhiều hợp
+	// đồng lịch sử theo thời gian.
+	contractsCol := DB.Collection("contracts")
+	_, err = contractsCol.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: map[string]interface{}{"room_id": 1},
+		Options: options.Index().
+			SetUnique(true).
+			SetPartialFilterExpression(bson.M{"status": "active"}),
+	})
+	if err != nil {
+		log.Println("Cảnh báo tạo index contracts.room_id (partial active):", err)
+	}
+	_, err = contractsCol.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: map[string]interface{}{"tenant_ids": 1},
+	})
+	if err != nil {
+		log.Println("Cảnh báo tạo index contracts.tenant_ids:", err)
+	}
+
+	depositTxCol := DB.Collection("deposit_transactions")
+	_, err = depositTxCol.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: map[string]interface{}{"contract_id": 1},
+	})
+	if err != nil {
+		log.Println("Cảnh báo tạo index deposit_transactions.contract_id:", err)
 	}
 }
 

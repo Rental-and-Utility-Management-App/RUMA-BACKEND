@@ -46,6 +46,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 	roomHandler := handlers.NewRoomHandler()
 	invoiceHandler := handlers.NewInvoiceHandler(cfg)
 	paymentHandler := handlers.NewPaymentHandler(cfg)
+	contractHandler := handlers.NewContractHandler()
 
 	// Rate limit riêng cho login: tối đa 5 lần thử/phút theo từng IP, chống brute-force.
 	loginLimiter := middleware.NewRateLimiter(5, time.Minute)
@@ -113,6 +114,25 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 				invoicesManagerOnly.POST("", invoiceHandler.CreateInvoice)
 				invoicesManagerOnly.PUT("/:id", invoiceHandler.UpdateInvoice)
 				invoicesManagerOnly.POST("/:id/cancel", invoiceHandler.CancelInvoice)
+			}
+		}
+
+		// Contracts - manager tạo/quản lý, cả 2 role xem (tự lọc theo quyền)
+		contracts := protected.Group("/contracts")
+		{
+			contracts.GET("", contractHandler.ListContracts)
+			contracts.GET("/:id", contractHandler.GetContract)
+			contracts.GET("/:id/deposit-transactions", contractHandler.ListDepositTransactions)
+
+			contractsManagerOnly := contracts.Group("")
+			contractsManagerOnly.Use(middleware.RequireRole(string(models.RoleManager)))
+			{
+				contractsManagerOnly.POST("", contractHandler.CreateContract)
+				contractsManagerOnly.PUT("/:id", contractHandler.UpdateContract)
+				contractsManagerOnly.POST("/:id/extend", contractHandler.ExtendContract)
+				contractsManagerOnly.POST("/:id/collect-deposit", contractHandler.CollectDeposit)
+				contractsManagerOnly.POST("/:id/checkout", contractHandler.CheckoutContract)
+				contractsManagerOnly.POST("/:id/cancel", contractHandler.CancelContract)
 			}
 		}
 
