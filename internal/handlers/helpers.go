@@ -44,6 +44,29 @@ func removeObjectID(ids []primitive.ObjectID, target primitive.ObjectID) []primi
 	return result
 }
 
+// hasActiveContractForRoom kiểm tra phòng có đang gắn với 1 hợp đồng "active"
+// hay không. Dùng để chặn các thao tác gán/trả phòng "tắt" (không qua
+// /api/contracts) khi phòng đang thuộc quản lý của 1 hợp đồng hiệu lực -
+// tránh để hợp đồng bị "mồ côi" (vẫn active nhưng phòng đã trống/đổi tenant).
+func hasActiveContractForRoom(ctx context.Context, contractsCol *mongo.Collection, roomID primitive.ObjectID) (bool, error) {
+	count, err := contractsCol.CountDocuments(ctx, bson.M{"room_id": roomID, "status": models.ContractStatusActive})
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// hasActiveContractForTenant kiểm tra tenant có đang đứng tên trong 1 hợp
+// đồng "active" hay không (tương tự hasActiveContractForRoom nhưng xét theo
+// phía tenant, dùng khi đổi/trả phòng cho 1 tenant cụ thể).
+func hasActiveContractForTenant(ctx context.Context, contractsCol *mongo.Collection, tenantID primitive.ObjectID) (bool, error) {
+	count, err := contractsCol.CountDocuments(ctx, bson.M{"tenant_ids": tenantID, "status": models.ContractStatusActive})
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // addTenantToRoom thêm 1 tenant vào phòng (idempotent - không tạo phần tử
 // trùng nếu tenant đã có sẵn trong phòng), đồng thời đồng bộ lại
 // status (-> occupied) và occupants (= số tenant hiện có).

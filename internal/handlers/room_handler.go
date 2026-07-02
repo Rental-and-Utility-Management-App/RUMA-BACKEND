@@ -378,6 +378,22 @@ func (h *RoomHandler) CheckoutRoom(c *gin.Context) {
 		return
 	}
 
+	// Nếu phòng đang gắn với 1 hợp đồng active, KHÔNG cho trả phòng qua lối tắt
+	// này (sẽ làm hợp đồng bị "mồ côi": vẫn active nhưng phòng đã trống, đồng
+	// thời chặn tạo hợp đồng mới cho phòng do ràng buộc unique room_id+active).
+	// Bắt buộc phải checkout đúng quy trình qua /api/contracts/:id/checkout
+	// (hoặc /cancel nếu chưa thu cọc) để đóng hợp đồng và xử lý cọc trước.
+	contractsCol := config.GetCollection("contracts")
+	hasActive, err := hasActiveContractForRoom(ctx, contractsCol, id)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if hasActive {
+		utils.Error(c, http.StatusConflict, "Phòng đang gắn với 1 hợp đồng hiệu lực; hãy dùng POST /api/contracts/{id}/checkout (hoặc /cancel nếu chưa thu cọc) để trả phòng đúng quy trình")
+		return
+	}
+
 	// Trả TOÀN BỘ phòng: gỡ hết tenant đang ở (phòng có thể có nhiều người).
 	// Nếu chỉ muốn trả phòng cho 1 tenant cụ thể (còn người khác ở lại),
 	// dùng DELETE /api/users/:id/room thay vì endpoint này.

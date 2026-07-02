@@ -86,6 +86,32 @@ func (h *UserHandler) CreateTenant(c *gin.Context) {
 			utils.Error(c, http.StatusBadRequest, "Room ID không hợp lệ")
 			return
 		}
+
+		roomsCol := config.GetCollection("rooms")
+		roomCount, err := roomsCol.CountDocuments(ctx, bson.M{"_id": roomID})
+		if err != nil {
+			utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+			return
+		}
+		if roomCount == 0 {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
+			return
+		}
+
+		// Không cho gán trực tiếp vào phòng đang gắn hợp đồng active: hợp đồng đó
+		// không có tenant mới này trong tenant_ids -> gán "tắt" sẽ làm room.tenant_ids
+		// lệch khỏi contract.tenant_ids. Phải thêm người thông qua /api/contracts.
+		contractsCol := config.GetCollection("contracts")
+		hasActive, err := hasActiveContractForRoom(ctx, contractsCol, roomID)
+		if err != nil {
+			utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+			return
+		}
+		if hasActive {
+			utils.Error(c, http.StatusConflict, "Phòng đang gắn với 1 hợp đồng hiệu lực; hãy thêm người thuê thông qua hợp đồng (POST /api/contracts) thay vì gán trực tiếp lúc tạo tài khoản")
+			return
+		}
+
 		user.RoomID = &roomID
 	}
 
@@ -284,6 +310,7 @@ func (h *UserHandler) AssignRoom(c *gin.Context) {
 
 	usersCol := config.GetCollection("users")
 	roomsCol := config.GetCollection("rooms")
+	contractsCol := config.GetCollection("contracts")
 
 	var tenant models.User
 	if err := usersCol.FindOne(ctx, bson.M{"_id": tenantID, "role": models.RoleTenant}).Decode(&tenant); err != nil {
@@ -301,6 +328,20 @@ func (h *UserHandler) AssignRoom(c *gin.Context) {
 		return
 	}
 
+	// Không cho đổi phòng "tắt" nếu tenant đang đứng tên trong 1 hợp đồng active -
+	// đổi thẳng sẽ làm hợp đồng đó lệch khỏi thực tế (tenant đã rời phòng cũ
+	// nhưng hợp đồng vẫn active với room_id cũ). Phải checkout/cancel hợp đồng
+	// đó trước.
+	tenantHasActive, err := hasActiveContractForTenant(ctx, contractsCol, tenantID)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if tenantHasActive {
+		utils.Error(c, http.StatusConflict, "Người thuê đang đứng tên trong 1 hợp đồng hiệu lực; hãy checkout hoặc hủy hợp đồng đó trước (POST /api/contracts/{id}/checkout hoặc /cancel) rồi mới đổi phòng")
+		return
+	}
+
 	// Phòng đích phải tồn tại trước khi thao tác gì (báo lỗi sớm, không đụng tới phòng cũ).
 	count, err := roomsCol.CountDocuments(ctx, bson.M{"_id": newRoomID})
 	if err != nil {
@@ -309,6 +350,19 @@ func (h *UserHandler) AssignRoom(c *gin.Context) {
 	}
 	if count == 0 {
 		utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
+		return
+	}
+
+	// Không cho gán vào phòng đích đang gắn hợp đồng active của (những) tenant
+	// khác - hợp đồng đó không có tenant này trong tenant_ids nên gán "tắt" sẽ
+	// làm room.tenant_ids lệch khỏi contract.tenant_ids.
+	roomHasActive, err := hasActiveContractForRoom(ctx, contractsCol, newRoomID)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if roomHasActive {
+		utils.Error(c, http.StatusConflict, "Phòng đích đang gắn với 1 hợp đồng hiệu lực; hãy quản lý người ở ghép thông qua hợp đồng (POST /api/contracts) thay vì gán trực tiếp")
 		return
 	}
 
@@ -381,6 +435,20 @@ func (h *UserHandler) UnassignRoom(c *gin.Context) {
 
 	if tenant.RoomID == nil {
 		utils.Error(c, http.StatusConflict, "Người thuê hiện không thuộc phòng nào")
+		return
+	}
+
+	// Không cho trả phòng "tắt" nếu tenant đang đứng tên trong 1 hợp đồng active -
+	// sẽ làm hợp đồng bị "mồ côi" (vẫn active nhưng tenant đã rời phòng). Phải
+	// checkout/cancel hợp đồng đó trước để giữ đồng bộ dữ liệu và xử lý cọc đúng quy trình.
+	contractsCol := config.GetCollection("contracts")
+	hasActive, err := hasActiveContractForTenant(ctx, contractsCol, tenantID)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if hasActive {
+		utils.Error(c, http.StatusConflict, "Người thuê đang đứng tên trong 1 hợp đồng hiệu lực; hãy dùng POST /api/contracts/{id}/checkout (hoặc /cancel nếu chưa thu cọc) để trả phòng đúng quy trình")
 		return
 	}
 
