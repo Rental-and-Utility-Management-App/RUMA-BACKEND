@@ -882,6 +882,212 @@ func (h *ContractHandler) CancelContract(c *gin.Context) {
 	utils.Success(c, http.StatusOK, "Hủy hợp đồng thành công", nil)
 }
 
+// ===================== Quản lý người ở ghép giữa hợp đồng =====================
+//
+// Cho phép thêm/gỡ 1 tenant vào/khỏi hợp đồng đang active mà KHÔNG cần
+// checkout toàn bộ hợp đồng rồi tạo lại (hữu ích khi phòng ở ghép có người
+// chuyển vào/ra giữa chừng). contract.tenant_ids vẫn là nguồn sự thật duy
+// nhất; 2 endpoint này tự đồng bộ sang room.tenant_ids và user.room_id.
+//
+// Lưu ý: không tự động chia/điều chỉnh lại deposit_amount/deposit_paid khi
+// đổi người - tiền cọc vẫn tính theo cả hợp đồng như 1 khoản chung. Nếu cần
+// điều chỉnh theo số người, quản lý (manager) tự xử lý qua note/collect-deposit.
+
+type addTenantToContractRequest struct {
+	TenantID string `json:"tenant_id" binding:"required"`
+}
+
+// AddTenantToContract godoc
+// @Summary Thêm 1 người ở ghép vào hợp đồng đang active
+// @Description Manager thêm 1 tenant có sẵn vào hợp đồng đang active (ở ghép
+// @Description giữa chừng), gán luôn tenant đó vào phòng của hợp đồng. Tenant
+// @Description phải chưa thuộc phòng nào khác và chưa đứng tên hợp đồng active nào khác.
+// @Tags Contracts
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Contract ID"
+// @Param request body addTenantToContractRequest true "Tenant cần thêm"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/contracts/{id}/tenants [post]
+func (h *ContractHandler) AddTenantToContract(c *gin.Context) {
+	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		return
+	}
+
+	var req addTenantToContractRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
+		return
+	}
+	tenantID, err := primitive.ObjectIDFromHex(req.TenantID)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "tenant_id không hợp lệ")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	contractsCol := config.GetCollection("contracts")
+	roomsCol := config.GetCollection("rooms")
+	usersCol := config.GetCollection("users")
+
+	var contract models.Contract
+	if err := contractsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&contract); err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if contract.Status != models.ContractStatusActive {
+		utils.Error(c, http.StatusConflict, "Chỉ có thể thêm người vào hợp đồng đang active")
+		return
+	}
+	if containsObjectID(contract.TenantIDs, tenantID) {
+		utils.Error(c, http.StatusConflict, "Người thuê đã đứng tên trong hợp đồng này rồi")
+		return
+	}
+
+	var tenant models.User
+	if err := usersCol.FindOne(ctx, bson.M{"_id": tenantID, "role": models.RoleTenant}).Decode(&tenant); err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy người thuê")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if tenant.RoomID != nil {
+		utils.Error(c, http.StatusConflict, "Người thuê '"+tenant.FullName+"' đang thuộc phòng khác, cần trả phòng trước")
+		return
+	}
+	tenantHasActive, err := hasActiveContractForTenant(ctx, contractsCol, tenantID)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if tenantHasActive {
+		utils.Error(c, http.StatusConflict, "Người thuê đang đứng tên trong 1 hợp đồng hiệu lực khác")
+		return
+	}
+
+	now := time.Now()
+	if _, err := addTenantToRoom(ctx, roomsCol, contract.RoomID, tenantID); err != nil {
+		if err == ErrRoomFull {
+			utils.Error(c, http.StatusConflict, "Phòng đã đủ số người tối đa (capacity), không thể thêm")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Không thể gán người thuê vào phòng")
+		return
+	}
+	if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": tenantID}, bson.M{
+		"$set": bson.M{"room_id": contract.RoomID, "updated_at": now},
+	}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Đã gán phòng nhưng cập nhật tài khoản người thuê thất bại, cần kiểm tra lại thủ công")
+		return
+	}
+	if _, err := contractsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
+		"$addToSet": bson.M{"tenant_ids": tenantID},
+		"$set":      bson.M{"updated_at": now},
+	}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Đã gán phòng nhưng cập nhật hợp đồng thất bại, cần kiểm tra lại thủ công")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Thêm người ở ghép vào hợp đồng thành công", gin.H{
+		"contract_id": id,
+		"tenant_id":   tenantID,
+		"room_id":     contract.RoomID,
+	})
+}
+
+// RemoveTenantFromContract godoc
+// @Summary Gỡ 1 người ở ghép khỏi hợp đồng đang active
+// @Description Manager gỡ 1 tenant khỏi hợp đồng đang active (những tenant
+// @Description khác vẫn ở lại, hợp đồng vẫn active). Không cho gỡ nếu đây là
+// @Description tenant cuối cùng của hợp đồng - trường hợp đó phải dùng
+// @Description /checkout hoặc /cancel để đóng hẳn hợp đồng.
+// @Tags Contracts
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Contract ID"
+// @Param tenantId path string true "Tenant ID cần gỡ"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/contracts/{id}/tenants/{tenantId} [delete]
+func (h *ContractHandler) RemoveTenantFromContract(c *gin.Context) {
+	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		return
+	}
+	tenantID, err := primitive.ObjectIDFromHex(c.Param("tenantId"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "tenantId không hợp lệ")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	contractsCol := config.GetCollection("contracts")
+	roomsCol := config.GetCollection("rooms")
+	usersCol := config.GetCollection("users")
+
+	var contract models.Contract
+	if err := contractsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&contract); err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if contract.Status != models.ContractStatusActive {
+		utils.Error(c, http.StatusConflict, "Chỉ có thể gỡ người khỏi hợp đồng đang active")
+		return
+	}
+	if !containsObjectID(contract.TenantIDs, tenantID) {
+		utils.Error(c, http.StatusNotFound, "Người thuê không đứng tên trong hợp đồng này")
+		return
+	}
+	if len(contract.TenantIDs) <= 1 {
+		utils.Error(c, http.StatusConflict, "Đây là người thuê cuối cùng trong hợp đồng; hãy dùng /checkout hoặc /cancel để đóng hợp đồng thay vì gỡ từng người")
+		return
+	}
+
+	now := time.Now()
+	if _, err := removeTenantFromRoom(ctx, roomsCol, contract.RoomID, tenantID); err != nil && err != mongo.ErrNoDocuments {
+		utils.Error(c, http.StatusInternalServerError, "Không thể gỡ người thuê khỏi phòng")
+		return
+	}
+	if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": tenantID}, bson.M{
+		"$set":   bson.M{"updated_at": now},
+		"$unset": bson.M{"room_id": ""},
+	}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Đã gỡ khỏi phòng nhưng cập nhật tài khoản người thuê thất bại, cần kiểm tra lại thủ công")
+		return
+	}
+	if _, err := contractsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
+		"$pull": bson.M{"tenant_ids": tenantID},
+		"$set":  bson.M{"updated_at": now},
+	}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Đã gỡ khỏi phòng nhưng cập nhật hợp đồng thất bại, cần kiểm tra lại thủ công")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Gỡ người ở ghép khỏi hợp đồng thành công", gin.H{
+		"contract_id": id,
+		"tenant_id":   tenantID,
+		"room_id":     contract.RoomID,
+	})
+}
+
 // ===================== Lịch sử giao dịch cọc =====================
 
 // ListDepositTransactions godoc

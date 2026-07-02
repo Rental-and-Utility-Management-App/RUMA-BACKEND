@@ -133,6 +133,8 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 				contractsManagerOnly.POST("/:id/collect-deposit", contractHandler.CollectDeposit)
 				contractsManagerOnly.POST("/:id/checkout", contractHandler.CheckoutContract)
 				contractsManagerOnly.POST("/:id/cancel", contractHandler.CancelContract)
+				contractsManagerOnly.POST("/:id/tenants", contractHandler.AddTenantToContract)
+				contractsManagerOnly.DELETE("/:id/tenants/:tenantId", contractHandler.RemoveTenantFromContract)
 			}
 		}
 
