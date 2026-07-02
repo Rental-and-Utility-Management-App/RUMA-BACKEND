@@ -73,6 +73,10 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		return
 	}
 
+	if invoice.Status == models.InvoiceStatusCancelled {
+		utils.Error(c, http.StatusConflict, "Hóa đơn này đã bị hủy, không thể ghi nhận thanh toán")
+		return
+	}
 	if invoice.Status == models.InvoiceStatusPaid {
 		utils.Error(c, http.StatusConflict, "Hóa đơn này đã được thanh toán đầy đủ")
 		return
@@ -103,6 +107,7 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		InvoiceID:   invoiceID,
 		RoomID:      invoice.RoomID,
 		TenantID:    invoice.TenantID,
+		TenantIDs:   invoice.TenantIDs,
 		Amount:      req.Amount,
 		Method:      req.Method,
 		Note:        req.Note,
@@ -167,7 +172,12 @@ func (h *PaymentHandler) ListPayments(c *gin.Context) {
 			utils.Error(c, http.StatusBadRequest, "User ID không hợp lệ")
 			return
 		}
-		filter["tenant_id"] = userID
+		// Match payment mà tenant này nằm trong tenant_ids (ở ghép), hoặc là tenant
+		// đại diện của payment cũ chưa có tenant_ids (tạo trước khi có field này).
+		filter["$or"] = bson.A{
+			bson.M{"tenant_ids": userID},
+			bson.M{"tenant_id": userID, "tenant_ids": bson.M{"$exists": false}},
+		}
 	}
 
 	if invoiceIDStr := c.Query("invoice_id"); invoiceIDStr != "" {
@@ -310,6 +320,7 @@ func (h *PaymentHandler) SepayWebhook(c *gin.Context) {
 		InvoiceID:             invoice.ID,
 		RoomID:                invoice.RoomID,
 		TenantID:              invoice.TenantID,
+		TenantIDs:             invoice.TenantIDs,
 		Amount:                payload.TransferAmount,
 		Method:                models.PaymentMethodTransfer,
 		Note:                  "Tự động xác nhận qua SePay - GD " + payload.ReferenceCode,
@@ -353,6 +364,204 @@ func (h *PaymentHandler) SepayWebhook(c *gin.Context) {
 
 	log.Printf("✅ Webhook SePay: tự động ghi nhận thanh toán %.0f cho hóa đơn %s\n", payload.TransferAmount, refCode)
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// recalculateInvoiceAfterPaymentChange tính lại paid_amount/status của invoice
+// dựa trên tổng thực tế các payment còn lại (KHÔNG cộng/trừ dồn thủ công), để
+// tránh lệch số nếu có sai sót ở lần sửa/xóa trước đó.
+func recalculateInvoiceAfterPaymentChange(ctx context.Context, paymentsCol, invoicesCol *mongo.Collection, invoice models.Invoice) error {
+	cursor, err := paymentsCol.Find(ctx, bson.M{"invoice_id": invoice.ID})
+	if err != nil {
+		return err
+	}
+	defer cursor.Close(ctx)
+
+	var payments []models.Payment
+	if err := cursor.All(ctx, &payments); err != nil {
+		return err
+	}
+
+	totalPaid := 0.0
+	for _, p := range payments {
+		totalPaid += p.Amount
+	}
+
+	newStatus := models.InvoiceStatusUnpaid
+	if totalPaid > 0 && totalPaid < invoice.TotalAmount {
+		newStatus = models.InvoiceStatusPartial
+	} else if totalPaid >= invoice.TotalAmount {
+		newStatus = models.InvoiceStatusPaid
+	}
+	// Hóa đơn đã bị hủy thì không đổi lại status dù có payment (không nên xảy ra
+	// vì cancel chỉ cho phép khi paid_amount == 0, nhưng vẫn phòng hờ).
+	if invoice.Status == models.InvoiceStatusCancelled {
+		newStatus = models.InvoiceStatusCancelled
+	}
+
+	_, err = invoicesCol.UpdateOne(ctx, bson.M{"_id": invoice.ID}, bson.M{
+		"$set": bson.M{
+			"paid_amount": totalPaid,
+			"status":      newStatus,
+			"updated_at":  time.Now(),
+		},
+	})
+	return err
+}
+
+type updatePaymentRequest struct {
+	Amount *float64             `json:"amount" binding:"omitempty,gt=0"`
+	Method models.PaymentMethod `json:"method" binding:"omitempty,oneof=cash bank_transfer other"`
+	Note   *string              `json:"note"`
+	PaidAt string               `json:"paid_at"` // format: 2006-01-02
+}
+
+// UpdatePayment godoc
+// @Summary Sửa 1 lần thanh toán
+// @Description Manager sửa lại 1 payment ghi nhận nhầm (sai số tiền/phương thức/ngày).
+// @Description Invoice liên quan sẽ được tính lại paid_amount/status từ tổng
+// @Description các payment thực tế còn lại. Không cho sửa payment tự động qua webhook
+// @Description (is_auto_confirmed) vì phải khớp với giao dịch ngân hàng thật.
+// @Tags Payments
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Payment ID"
+// @Param request body updatePaymentRequest true "Dữ liệu cập nhật"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/payments/{id} [put]
+func (h *PaymentHandler) UpdatePayment(c *gin.Context) {
+	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		return
+	}
+
+	var req updatePaymentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	paymentsCol := config.GetCollection("payments")
+	var payment models.Payment
+	if err := paymentsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&payment); err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy thanh toán")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	if payment.IsAutoConfirmed {
+		utils.Error(c, http.StatusConflict, "Không thể sửa thanh toán tự động ghi nhận qua webhook")
+		return
+	}
+
+	invoicesCol := config.GetCollection("invoices")
+	var invoice models.Invoice
+	if err := invoicesCol.FindOne(ctx, bson.M{"_id": payment.InvoiceID}).Decode(&invoice); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	update := bson.M{}
+	if req.Amount != nil {
+		update["amount"] = *req.Amount
+	}
+	if req.Method != "" {
+		update["method"] = req.Method
+	}
+	if req.Note != nil {
+		update["note"] = *req.Note
+	}
+	if req.PaidAt != "" {
+		parsed, err := time.Parse("2006-01-02", req.PaidAt)
+		if err != nil {
+			utils.Error(c, http.StatusBadRequest, "paid_at không hợp lệ, đúng format 2006-01-02")
+			return
+		}
+		update["paid_at"] = parsed
+	}
+
+	if len(update) == 0 {
+		utils.Error(c, http.StatusBadRequest, "Không có dữ liệu để cập nhật")
+		return
+	}
+
+	if _, err := paymentsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": update}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật thanh toán")
+		return
+	}
+
+	if err := recalculateInvoiceAfterPaymentChange(ctx, paymentsCol, invoicesCol, invoice); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Sửa thanh toán thành công nhưng cập nhật hóa đơn thất bại")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Cập nhật thanh toán thành công", nil)
+}
+
+// DeletePayment godoc
+// @Summary Xóa 1 lần thanh toán
+// @Description Manager xóa 1 payment ghi nhận nhầm. Invoice liên quan sẽ được
+// @Description tính lại paid_amount/status từ tổng các payment thực tế còn lại.
+// @Description Không cho xóa payment tự động qua webhook (is_auto_confirmed) -
+// @Description dữ liệu đó phải khớp với giao dịch ngân hàng thật, không nên xóa tay.
+// @Tags Payments
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Payment ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/payments/{id} [delete]
+func (h *PaymentHandler) DeletePayment(c *gin.Context) {
+	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	paymentsCol := config.GetCollection("payments")
+	var payment models.Payment
+	if err := paymentsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&payment); err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy thanh toán")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	if payment.IsAutoConfirmed {
+		utils.Error(c, http.StatusConflict, "Không thể xóa thanh toán tự động ghi nhận qua webhook")
+		return
+	}
+
+	invoicesCol := config.GetCollection("invoices")
+	var invoice models.Invoice
+	if err := invoicesCol.FindOne(ctx, bson.M{"_id": payment.InvoiceID}).Decode(&invoice); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	if _, err := paymentsCol.DeleteOne(ctx, bson.M{"_id": id}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Không thể xóa thanh toán")
+		return
+	}
+
+	if err := recalculateInvoiceAfterPaymentChange(ctx, paymentsCol, invoicesCol, invoice); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Xóa thanh toán thành công nhưng cập nhật hóa đơn thất bại")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Xóa thanh toán thành công", nil)
 }
 
 // formatSepayTxnID chuẩn hóa transaction id của SePay thành string để lưu/so khớp.

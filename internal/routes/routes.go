@@ -111,6 +111,8 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 			invoicesManagerOnly.Use(middleware.RequireRole(string(models.RoleManager)))
 			{
 				invoicesManagerOnly.POST("", invoiceHandler.CreateInvoice)
+				invoicesManagerOnly.PUT("/:id", invoiceHandler.UpdateInvoice)
+				invoicesManagerOnly.POST("/:id/cancel", invoiceHandler.CancelInvoice)
 			}
 		}
 
@@ -123,6 +125,8 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 			paymentsManagerOnly.Use(middleware.RequireRole(string(models.RoleManager)))
 			{
 				paymentsManagerOnly.POST("", paymentHandler.CreatePayment)
+				paymentsManagerOnly.PUT("/:id", paymentHandler.UpdatePayment)
+				paymentsManagerOnly.DELETE("/:id", paymentHandler.DeletePayment)
 			}
 		}
 	}

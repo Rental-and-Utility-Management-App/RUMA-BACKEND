@@ -103,6 +103,10 @@ func (h *UserHandler) CreateTenant(c *gin.Context) {
 				utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
 				return
 			}
+			if err == ErrRoomFull {
+				utils.Error(c, http.StatusConflict, "Phòng đã đủ số người tối đa (capacity), không thể gán thêm")
+				return
+			}
 			utils.Error(c, http.StatusInternalServerError, "Tạo user thành công nhưng cập nhật phòng thất bại")
 			return
 		}
@@ -318,6 +322,10 @@ func (h *UserHandler) AssignRoom(c *gin.Context) {
 
 	newRoom, err := addTenantToRoom(ctx, roomsCol, newRoomID, tenantID)
 	if err != nil {
+		if err == ErrRoomFull {
+			utils.Error(c, http.StatusConflict, "Phòng đích đã đủ số người tối đa (capacity), không thể gán thêm")
+			return
+		}
 		utils.Error(c, http.StatusInternalServerError, "Không thể gán người thuê vào phòng mới")
 		return
 	}

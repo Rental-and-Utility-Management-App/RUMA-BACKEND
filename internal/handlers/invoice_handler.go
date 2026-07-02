@@ -149,7 +149,10 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 	}
 
 	invoicesCol := config.GetCollection("invoices")
-	count, err := invoicesCol.CountDocuments(ctx, bson.M{"room_id": roomID, "month": req.Month, "year": req.Year})
+	count, err := invoicesCol.CountDocuments(ctx, bson.M{
+		"room_id": roomID, "month": req.Month, "year": req.Year,
+		"status": bson.M{"$ne": models.InvoiceStatusCancelled}, // hóa đơn đã hủy không tính là trùng
+	})
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
 		return
@@ -180,6 +183,17 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 
 	occupants := room.Occupants
 	if req.Occupants != nil {
+		// Occupants nhập tay chỉ được chấp nhận trong khoảng hợp lý: tối thiểu 1,
+		// tối đa bằng capacity của phòng (nếu có khai báo) - tránh nhập sai số để
+		// thổi phồng/giảm phí quản lý.
+		if *req.Occupants < 1 {
+			utils.Error(c, http.StatusBadRequest, "Occupants phải lớn hơn hoặc bằng 1")
+			return
+		}
+		if room.Capacity > 0 && *req.Occupants > room.Capacity {
+			utils.Error(c, http.StatusBadRequest, "Occupants không được vượt quá capacity của phòng")
+			return
+		}
 		occupants = *req.Occupants
 	}
 	managementFeeAmount := float64(occupants) * room.ManagementFeePerPerson
@@ -194,15 +208,17 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 	}
 
 	invoiceID := primitive.NewObjectID()
+	tenantIDsSnapshot := make([]primitive.ObjectID, len(room.TenantIDs))
+	copy(tenantIDsSnapshot, room.TenantIDs)
 	invoice := models.Invoice{
 		ID:     invoiceID,
 		RoomID: roomID,
-		// Phòng có thể có nhiều tenant ở ghép; hóa đơn vẫn gắn 1 tenant "đại diện"
-		// để tương thích với logic quyền xem hiện tại (tenant chỉ xem hóa đơn của
-		// chính mình theo tenant_id). Mặc định lấy người được gán đầu tiên.
-		// TODO: nếu cần MỌI tenant cùng phòng đều xem được hóa đơn, cân nhắc đổi
-		// InvoiceStatus/Invoice sang lọc theo room_id + room.TenantIDs thay vì tenant_id.
+		// TenantID: tenant "đại diện", giữ để tương thích ngược.
 		TenantID: room.TenantIDs[0],
+		// TenantIDs: snapshot MỌI tenant đang ở phòng lúc tạo hóa đơn, để mọi
+		// người ở ghép đều xem được hóa đơn/lịch sử thanh toán của phòng mình
+		// (thay vì chỉ người "đại diện").
+		TenantIDs: tenantIDsSnapshot,
 
 		Month: req.Month,
 		Year:  req.Year,
@@ -269,7 +285,12 @@ func (h *InvoiceHandler) ListInvoices(c *gin.Context) {
 			utils.Error(c, http.StatusBadRequest, "User ID không hợp lệ")
 			return
 		}
-		filter["tenant_id"] = userID
+		// Match hóa đơn mà tenant này nằm trong tenant_ids (ở ghép), hoặc là tenant
+		// đại diện của hóa đơn cũ chưa có tenant_ids (tạo trước khi có field này).
+		filter["$or"] = bson.A{
+			bson.M{"tenant_ids": userID},
+			bson.M{"tenant_id": userID, "tenant_ids": bson.M{"$exists": false}},
+		}
 	}
 
 	if roomIDStr := c.Query("room_id"); roomIDStr != "" {
@@ -330,11 +351,16 @@ func (h *InvoiceHandler) GetInvoice(c *gin.Context) {
 		return
 	}
 
-	// Tenant chỉ được xem hóa đơn của chính mình
+	// Tenant chỉ được xem hóa đơn của phòng mình đang/đã ở (bất kỳ ai trong
+	// tenant_ids, không chỉ người đại diện). Hóa đơn cũ chưa có tenant_ids thì
+	// fallback so khớp tenant_id.
 	role := c.GetString("role")
 	if role == string(models.RoleTenant) {
 		userIDStr := c.GetString("user_id")
-		if invoice.TenantID.Hex() != userIDStr {
+		userID, err := primitive.ObjectIDFromHex(userIDStr)
+		allowed := err == nil && (containsObjectID(invoice.TenantIDs, userID) ||
+			(len(invoice.TenantIDs) == 0 && invoice.TenantID == userID))
+		if !allowed {
 			utils.Error(c, http.StatusForbidden, "Bạn không có quyền xem hóa đơn này")
 			return
 		}
@@ -376,11 +402,14 @@ func (h *InvoiceHandler) GetInvoiceQRCode(c *gin.Context) {
 		return
 	}
 
-	// Tenant chỉ được lấy QR của hóa đơn chính mình
+	// Tenant chỉ được lấy QR của hóa đơn thuộc phòng mình (mọi tenant ở ghép).
 	role := c.GetString("role")
 	if role == string(models.RoleTenant) {
 		userIDStr := c.GetString("user_id")
-		if invoice.TenantID.Hex() != userIDStr {
+		userID, err := primitive.ObjectIDFromHex(userIDStr)
+		allowed := err == nil && (containsObjectID(invoice.TenantIDs, userID) ||
+			(len(invoice.TenantIDs) == 0 && invoice.TenantID == userID))
+		if !allowed {
 			utils.Error(c, http.StatusForbidden, "Bạn không có quyền xem hóa đơn này")
 			return
 		}
@@ -441,4 +470,199 @@ func (h *InvoiceHandler) GetInvoiceQRCode(c *gin.Context) {
 		"account_name":     h.cfg.BankAccountName,
 		"qr_code_url":      qrURL,
 	})
+}
+
+type updateInvoiceRequest struct {
+	ElectricNew *float64 `json:"electric_new"`
+	WaterNew    *float64 `json:"water_new"`
+	OtherFees   *float64 `json:"other_fees"`
+	OtherNote   *string  `json:"other_note"`
+	Occupants   *int     `json:"occupants"`
+	DueDate     string   `json:"due_date"` // format: 2006-01-02
+}
+
+// UpdateInvoice godoc
+// @Summary Sửa hóa đơn
+// @Description Manager sửa hóa đơn tạo sai. CHỈ cho phép sửa khi hóa đơn chưa
+// @Description ghi nhận thanh toán nào (paid_amount == 0) - nếu đã có thanh
+// @Description toán, hãy hủy hóa đơn (cancel) rồi tạo lại để tránh làm lệch
+// @Description số tiền đã thu.
+// @Tags Invoices
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Param request body updateInvoiceRequest true "Dữ liệu cập nhật"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/invoices/{id} [put]
+func (h *InvoiceHandler) UpdateInvoice(c *gin.Context) {
+	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		return
+	}
+
+	var req updateInvoiceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	invoicesCol := config.GetCollection("invoices")
+	var invoice models.Invoice
+	if err := invoicesCol.FindOne(ctx, bson.M{"_id": id}).Decode(&invoice); err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hóa đơn")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	if invoice.Status == models.InvoiceStatusCancelled {
+		utils.Error(c, http.StatusConflict, "Hóa đơn đã bị hủy, không thể sửa")
+		return
+	}
+	if invoice.PaidAmount > 0 {
+		utils.Error(c, http.StatusConflict, "Hóa đơn đã ghi nhận thanh toán, không thể sửa trực tiếp - hãy hủy hóa đơn (cancel) rồi tạo lại")
+		return
+	}
+
+	roomsCol := config.GetCollection("rooms")
+	var room models.Room
+	if err := roomsCol.FindOne(ctx, bson.M{"_id": invoice.RoomID}).Decode(&room); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	electricNew := invoice.ElectricNew
+	if req.ElectricNew != nil {
+		electricNew = *req.ElectricNew
+	}
+	waterNew := invoice.WaterNew
+	if req.WaterNew != nil {
+		waterNew = *req.WaterNew
+	}
+	if electricNew < invoice.ElectricOld {
+		utils.Error(c, http.StatusBadRequest, "Chỉ số điện mới không được nhỏ hơn chỉ số cũ")
+		return
+	}
+	if waterNew < invoice.WaterOld {
+		utils.Error(c, http.StatusBadRequest, "Chỉ số nước mới không được nhỏ hơn chỉ số cũ")
+		return
+	}
+
+	otherFees := invoice.OtherFees
+	if req.OtherFees != nil {
+		otherFees = *req.OtherFees
+	}
+	otherNote := invoice.OtherNote
+	if req.OtherNote != nil {
+		otherNote = *req.OtherNote
+	}
+
+	occupants := invoice.Occupants
+	if req.Occupants != nil {
+		if *req.Occupants < 1 {
+			utils.Error(c, http.StatusBadRequest, "Occupants phải lớn hơn hoặc bằng 1")
+			return
+		}
+		if room.Capacity > 0 && *req.Occupants > room.Capacity {
+			utils.Error(c, http.StatusBadRequest, "Occupants không được vượt quá capacity của phòng")
+			return
+		}
+		occupants = *req.Occupants
+	}
+
+	dueDate := invoice.DueDate
+	if req.DueDate != "" {
+		parsed, err := time.Parse("2006-01-02", req.DueDate)
+		if err != nil {
+			utils.Error(c, http.StatusBadRequest, "due_date không hợp lệ, đúng format 2006-01-02")
+			return
+		}
+		dueDate = parsed
+	}
+
+	electricAmount := (electricNew - invoice.ElectricOld) * invoice.ElectricPrice
+	waterAmount := (waterNew - invoice.WaterOld) * invoice.WaterPrice
+	managementFeeAmount := float64(occupants) * invoice.ManagementFeePerPerson
+	totalAmount := invoice.RentAmount + electricAmount + waterAmount + managementFeeAmount + otherFees
+
+	update := bson.M{
+		"electric_new":          electricNew,
+		"electric_amount":       electricAmount,
+		"water_new":             waterNew,
+		"water_amount":          waterAmount,
+		"other_fees":            otherFees,
+		"other_note":            otherNote,
+		"occupants":             occupants,
+		"management_fee_amount": managementFeeAmount,
+		"total_amount":          totalAmount,
+		"due_date":              dueDate,
+		"updated_at":            time.Now(),
+	}
+
+	if _, err := invoicesCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": update}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật hóa đơn")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Cập nhật hóa đơn thành công", nil)
+}
+
+// CancelInvoice godoc
+// @Summary Hủy hóa đơn
+// @Description Manager hủy 1 hóa đơn tạo sai. CHỈ cho phép hủy khi chưa ghi
+// @Description nhận thanh toán nào (paid_amount == 0), để không mất dấu vết
+// @Description dòng tiền đã thu. Hóa đơn hủy vẫn được giữ lại (soft-cancel) để
+// @Description tra cứu, không tính vào check trùng phòng/tháng khi tạo hóa đơn mới.
+// @Tags Invoices
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/invoices/{id}/cancel [post]
+func (h *InvoiceHandler) CancelInvoice(c *gin.Context) {
+	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	invoicesCol := config.GetCollection("invoices")
+	var invoice models.Invoice
+	if err := invoicesCol.FindOne(ctx, bson.M{"_id": id}).Decode(&invoice); err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hóa đơn")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	if invoice.Status == models.InvoiceStatusCancelled {
+		utils.Error(c, http.StatusConflict, "Hóa đơn đã bị hủy trước đó")
+		return
+	}
+	if invoice.PaidAmount > 0 {
+		utils.Error(c, http.StatusConflict, "Hóa đơn đã ghi nhận thanh toán, không thể hủy - hãy xóa các payment liên quan trước (DELETE /api/payments/:id)")
+		return
+	}
+
+	if _, err := invoicesCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
+		"$set": bson.M{"status": models.InvoiceStatusCancelled, "updated_at": time.Now()},
+	}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Không thể hủy hóa đơn")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Hủy hóa đơn thành công", nil)
 }

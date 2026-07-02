@@ -31,7 +31,13 @@ type Payment struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	InvoiceID primitive.ObjectID `bson:"invoice_id" json:"invoice_id"`
 	RoomID    primitive.ObjectID `bson:"room_id" json:"room_id"`
-	TenantID  primitive.ObjectID `bson:"tenant_id" json:"tenant_id"`
+
+	// TenantID: tenant "đại diện" của hóa đơn liên quan. Giữ để tương thích ngược.
+	TenantID primitive.ObjectID `bson:"tenant_id" json:"tenant_id"`
+
+	// TenantIDs: copy từ invoice.TenantIDs tại thời điểm ghi nhận thanh toán,
+	// để mọi tenant ở ghép cùng phòng đều xem được lịch sử thanh toán của phòng.
+	TenantIDs []primitive.ObjectID `bson:"tenant_ids,omitempty" json:"tenant_ids,omitempty"`
 
 	Amount      float64            `bson:"amount" json:"amount"`
 	Method      PaymentMethod      `bson:"method" json:"method"`

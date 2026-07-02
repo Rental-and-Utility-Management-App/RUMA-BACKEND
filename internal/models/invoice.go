@@ -12,15 +12,20 @@ const (
 	InvoiceStatusUnpaid  InvoiceStatus = "unpaid"
 	InvoiceStatusPartial InvoiceStatus = "partial"
 	InvoiceStatusPaid    InvoiceStatus = "paid"
+	// InvoiceStatusCancelled: hóa đơn tạo sai/hủy bỏ. Chỉ có thể chuyển sang
+	// trạng thái này nếu chưa ghi nhận thanh toán nào (paid_amount == 0), để
+	// không làm mất dấu vết dòng tiền đã thu. Hóa đơn cancelled không tính vào
+	// check trùng phòng/tháng khi tạo hóa đơn mới.
+	InvoiceStatusCancelled InvoiceStatus = "cancelled"
 )
 
 // ValidInvoiceStatuses liệt kê toàn bộ giá trị hợp lệ, dùng để validate input.
-var ValidInvoiceStatuses = []InvoiceStatus{InvoiceStatusUnpaid, InvoiceStatusPartial, InvoiceStatusPaid}
+var ValidInvoiceStatuses = []InvoiceStatus{InvoiceStatusUnpaid, InvoiceStatusPartial, InvoiceStatusPaid, InvoiceStatusCancelled}
 
 // IsValid kiểm tra InvoiceStatus có phải là 1 trong các giá trị enum hợp lệ không.
 func (s InvoiceStatus) IsValid() bool {
 	switch s {
-	case InvoiceStatusUnpaid, InvoiceStatusPartial, InvoiceStatusPaid:
+	case InvoiceStatusUnpaid, InvoiceStatusPartial, InvoiceStatusPaid, InvoiceStatusCancelled:
 		return true
 	}
 	return false
@@ -28,9 +33,18 @@ func (s InvoiceStatus) IsValid() bool {
 
 // Invoice = hóa đơn của 1 phòng trong 1 tháng, gồm tiền nhà + điện + nước
 type Invoice struct {
-	ID       primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	RoomID   primitive.ObjectID `bson:"room_id" json:"room_id"`
+	ID     primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	RoomID primitive.ObjectID `bson:"room_id" json:"room_id"`
+
+	// TenantID: tenant "đại diện" (người đầu tiên trong phòng lúc tạo hóa đơn).
+	// Giữ lại để tương thích ngược, KHÔNG dùng field này để check quyền xem nữa.
 	TenantID primitive.ObjectID `bson:"tenant_id" json:"tenant_id"`
+
+	// TenantIDs: snapshot toàn bộ tenant đang ở phòng tại thời điểm tạo hóa đơn.
+	// Dùng để mọi người ở ghép trong phòng đều xem được hóa đơn/lịch sử thanh
+	// toán của phòng mình, không chỉ riêng người "đại diện". Hóa đơn tạo trước
+	// khi có field này sẽ rỗng -> handler fallback so khớp với TenantID.
+	TenantIDs []primitive.ObjectID `bson:"tenant_ids,omitempty" json:"tenant_ids,omitempty"`
 
 	Month int `bson:"month" json:"month"` // 1-12
 	Year  int `bson:"year" json:"year"`

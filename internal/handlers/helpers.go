@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -11,6 +12,10 @@ import (
 
 	"rental-app/internal/models"
 )
+
+// ErrRoomFull được addTenantToRoom trả về khi phòng đã đạt capacity, dùng để
+// handler phân biệt với lỗi hệ thống chung và trả về 409 kèm thông báo phù hợp.
+var ErrRoomFull = errors.New("room is full")
 
 // options_findSortByCreatedDesc trả về option sắp xếp mới nhất trước
 func options_findSortByCreatedDesc() *options.FindOptions {
@@ -50,6 +55,12 @@ func addTenantToRoom(ctx context.Context, roomsCol *mongo.Collection, roomID, te
 	}
 
 	if !containsObjectID(room.TenantIDs, tenantID) {
+		// Chặn gán vượt quá sức chứa phòng. Capacity == 0 nghĩa là phòng cũ
+		// chưa được khai báo capacity -> tạm thời không giới hạn (nên yêu cầu
+		// manager cập nhật capacity cho các phòng này).
+		if room.Capacity > 0 && len(room.TenantIDs) >= room.Capacity {
+			return nil, ErrRoomFull
+		}
 		room.TenantIDs = append(room.TenantIDs, tenantID)
 	}
 

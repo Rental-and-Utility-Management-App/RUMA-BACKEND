@@ -22,9 +22,12 @@ func NewRoomHandler() *RoomHandler {
 }
 
 type createRoomRequest struct {
-	Code                   string  `json:"code" binding:"required"`
-	Name                   string  `json:"name"`
-	Floor                  int     `json:"floor"`
+	Code  string `json:"code" binding:"required"`
+	Name  string `json:"name"`
+	Floor int    `json:"floor"`
+	// Capacity: số người tối đa được phép ở phòng, bắt buộc phải khai báo khi tạo
+	// phòng mới để hệ thống có thể chặn gán quá tải ngay từ đầu.
+	Capacity               int     `json:"capacity" binding:"required,min=1"`
 	MonthlyRent            float64 `json:"monthly_rent" binding:"required"`
 	ElectricPrice          float64 `json:"price_electricity" binding:"required"`
 	WaterPrice             float64 `json:"price_water" binding:"required"`
@@ -70,6 +73,7 @@ func (h *RoomHandler) CreateRoom(c *gin.Context) {
 		Code:                   req.Code,
 		Name:                   req.Name,
 		Floor:                  req.Floor,
+		Capacity:               req.Capacity,
 		MonthlyRent:            req.MonthlyRent,
 		ElectricPrice:          req.ElectricPrice,
 		WaterPrice:             req.WaterPrice,
@@ -181,6 +185,7 @@ func (h *RoomHandler) GetRoom(c *gin.Context) {
 type updateRoomRequest struct {
 	Name                   string            `json:"name"`
 	Floor                  *int              `json:"floor"`
+	Capacity               *int              `json:"capacity" binding:"omitempty,min=1"`
 	MonthlyRent            *float64          `json:"monthly_rent"`
 	ElectricPrice          *float64          `json:"price_electricity"`
 	WaterPrice             *float64          `json:"price_water"`
@@ -247,6 +252,26 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 	defer cancel()
 
 	roomsCol := config.GetCollection("rooms")
+
+	// Nếu manager giảm capacity, phải chặn nếu số tenant hiện tại đã vượt quá
+	// giá trị mới (tránh phòng bị "quá tải" ngay sau khi update).
+	if req.Capacity != nil {
+		var current models.Room
+		if err := roomsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&current); err != nil {
+			if err == mongo.ErrNoDocuments {
+				utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
+				return
+			}
+			utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+			return
+		}
+		if len(current.TenantIDs) > *req.Capacity {
+			utils.Error(c, http.StatusConflict, "Không thể giảm capacity xuống thấp hơn số người đang ở phòng")
+			return
+		}
+		update["capacity"] = *req.Capacity
+	}
+
 	res, err := roomsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": update})
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
@@ -289,6 +314,20 @@ func (h *RoomHandler) DeleteRoom(c *gin.Context) {
 	}
 	if room.Status == models.RoomStatusOccupied {
 		utils.Error(c, http.StatusConflict, "Không thể xóa phòng đang có người thuê")
+		return
+	}
+
+	// Chặn xóa nếu phòng đã từng có hóa đơn: xóa cứng sẽ làm invoice/payment cũ
+	// mồ côi (room_id trỏ tới phòng không còn tồn tại), gây khó tra cứu lịch sử.
+	// Manager nên dùng cách khác (đổi status, đổi note) để "ẩn" phòng không dùng nữa.
+	invoicesCol := config.GetCollection("invoices")
+	invoiceCount, err := invoicesCol.CountDocuments(ctx, bson.M{"room_id": id})
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if invoiceCount > 0 {
+		utils.Error(c, http.StatusConflict, "Không thể xóa phòng đã từng có hóa đơn (sẽ làm mồ côi dữ liệu lịch sử); hãy đặt status phù hợp thay vì xóa")
 		return
 	}
 
