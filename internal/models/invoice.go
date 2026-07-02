@@ -14,6 +14,18 @@ const (
 	InvoiceStatusPaid    InvoiceStatus = "paid"
 )
 
+// ValidInvoiceStatuses liệt kê toàn bộ giá trị hợp lệ, dùng để validate input.
+var ValidInvoiceStatuses = []InvoiceStatus{InvoiceStatusUnpaid, InvoiceStatusPartial, InvoiceStatusPaid}
+
+// IsValid kiểm tra InvoiceStatus có phải là 1 trong các giá trị enum hợp lệ không.
+func (s InvoiceStatus) IsValid() bool {
+	switch s {
+	case InvoiceStatusUnpaid, InvoiceStatusPartial, InvoiceStatusPaid:
+		return true
+	}
+	return false
+}
+
 // Invoice = hóa đơn của 1 phòng trong 1 tháng, gồm tiền nhà + điện + nước
 type Invoice struct {
 	ID       primitive.ObjectID `bson:"_id,omitempty" json:"id"`

@@ -94,13 +94,15 @@ func (h *UserHandler) CreateTenant(c *gin.Context) {
 		return
 	}
 
-	// Nếu có gán phòng, cập nhật phòng đó -> occupied + tenant_id
+	// Nếu có gán phòng, cập nhật phòng đó -> occupied + thêm vào tenant_ids
+	// (dùng $addToSet để không bao giờ bị trùng phần tử trong mảng).
 	if user.RoomID != nil {
 		roomsCol := config.GetCollection("rooms")
-		_, err = roomsCol.UpdateOne(ctx, bson.M{"_id": *user.RoomID}, bson.M{
-			"$set": bson.M{"status": models.RoomStatusOccupied, "tenant_id": user.ID, "updated_at": time.Now()},
-		})
-		if err != nil {
+		if _, err := addTenantToRoom(ctx, roomsCol, *user.RoomID, user.ID); err != nil {
+			if err == mongo.ErrNoDocuments {
+				utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
+				return
+			}
 			utils.Error(c, http.StatusInternalServerError, "Tạo user thành công nhưng cập nhật phòng thất bại")
 			return
 		}
@@ -234,4 +236,166 @@ func (h *UserHandler) UpdateTenant(c *gin.Context) {
 	}
 
 	utils.Success(c, http.StatusOK, "Cập nhật thành công", nil)
+}
+
+type assignRoomRequest struct {
+	RoomID string `json:"room_id" binding:"required"`
+}
+
+// AssignRoom godoc
+// @Summary Gán/đổi phòng cho người thuê có sẵn
+// @Description Manager gán 1 tenant đã tồn tại vào 1 phòng, hoặc đổi tenant đó
+// @Description sang phòng khác nếu đang ở phòng cũ. 1 phòng có thể chứa nhiều
+// @Description tenant (ở ghép). Có validate để tránh gán trùng (tenant đã ở
+// @Description đúng phòng đó rồi thì báo lỗi thay vì gán lại vô nghĩa).
+// @Tags Users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Tenant ID"
+// @Param request body assignRoomRequest true "Phòng muốn gán"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/users/{id}/room [put]
+func (h *UserHandler) AssignRoom(c *gin.Context) {
+	tenantID, err := primitive.ObjectIDFromHex(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		return
+	}
+
+	var req assignRoomRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
+		return
+	}
+
+	newRoomID, err := primitive.ObjectIDFromHex(req.RoomID)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "Room ID không hợp lệ")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	usersCol := config.GetCollection("users")
+	roomsCol := config.GetCollection("rooms")
+
+	var tenant models.User
+	if err := usersCol.FindOne(ctx, bson.M{"_id": tenantID, "role": models.RoleTenant}).Decode(&tenant); err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy người thuê")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	// Validate tránh gán trùng: tenant đã ở đúng phòng này rồi.
+	if tenant.RoomID != nil && *tenant.RoomID == newRoomID {
+		utils.Error(c, http.StatusConflict, "Người thuê đã ở phòng này rồi")
+		return
+	}
+
+	// Phòng đích phải tồn tại trước khi thao tác gì (báo lỗi sớm, không đụng tới phòng cũ).
+	count, err := roomsCol.CountDocuments(ctx, bson.M{"_id": newRoomID})
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if count == 0 {
+		utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
+		return
+	}
+
+	// Nếu đang ở phòng khác -> đây là thao tác ĐỔI phòng: gỡ khỏi phòng cũ trước.
+	if tenant.RoomID != nil {
+		if _, err := removeTenantFromRoom(ctx, roomsCol, *tenant.RoomID, tenantID); err != nil && err != mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusInternalServerError, "Không thể gỡ người thuê khỏi phòng cũ")
+			return
+		}
+	}
+
+	newRoom, err := addTenantToRoom(ctx, roomsCol, newRoomID, tenantID)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Không thể gán người thuê vào phòng mới")
+		return
+	}
+
+	if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": tenantID}, bson.M{
+		"$set": bson.M{"room_id": newRoomID, "updated_at": time.Now()},
+	}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Đã gán phòng nhưng cập nhật tài khoản người thuê thất bại")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Gán phòng thành công", gin.H{
+		"tenant_id": tenantID,
+		"room_id":   newRoomID,
+		"occupants": len(newRoom.TenantIDs),
+	})
+}
+
+// UnassignRoom godoc
+// @Summary Trả phòng cho 1 người thuê cụ thể
+// @Description Manager gỡ 1 tenant khỏi phòng hiện tại (những tenant khác ở
+// @Description ghép cùng phòng, nếu có, không bị ảnh hưởng). Phòng tự chuyển
+// @Description về "available" khi không còn tenant nào.
+// @Tags Users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Tenant ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/users/{id}/room [delete]
+func (h *UserHandler) UnassignRoom(c *gin.Context) {
+	tenantID, err := primitive.ObjectIDFromHex(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	usersCol := config.GetCollection("users")
+	roomsCol := config.GetCollection("rooms")
+
+	var tenant models.User
+	if err := usersCol.FindOne(ctx, bson.M{"_id": tenantID, "role": models.RoleTenant}).Decode(&tenant); err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy người thuê")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	if tenant.RoomID == nil {
+		utils.Error(c, http.StatusConflict, "Người thuê hiện không thuộc phòng nào")
+		return
+	}
+
+	oldRoomID := *tenant.RoomID
+	if _, err := removeTenantFromRoom(ctx, roomsCol, oldRoomID, tenantID); err != nil {
+		if err == mongo.ErrNoDocuments {
+			// Phòng cũ không còn tồn tại -> vẫn tiếp tục gỡ room_id khỏi tenant bên dưới.
+		} else {
+			utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật phòng")
+			return
+		}
+	}
+
+	if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": tenantID}, bson.M{
+		"$set":   bson.M{"updated_at": time.Now()},
+		"$unset": bson.M{"room_id": ""},
+	}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Trả phòng thành công nhưng cập nhật tài khoản người thuê thất bại")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Trả phòng thành công", gin.H{
+		"tenant_id": tenantID,
+		"room_id":   oldRoomID,
+	})
 }

@@ -143,7 +143,7 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 		return
 	}
 
-	if room.TenantID == nil {
+	if len(room.TenantIDs) == 0 {
 		utils.Error(c, http.StatusConflict, "Phòng chưa có người thuê, không thể tạo hóa đơn")
 		return
 	}
@@ -195,9 +195,14 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 
 	invoiceID := primitive.NewObjectID()
 	invoice := models.Invoice{
-		ID:       invoiceID,
-		RoomID:   roomID,
-		TenantID: *room.TenantID,
+		ID:     invoiceID,
+		RoomID: roomID,
+		// Phòng có thể có nhiều tenant ở ghép; hóa đơn vẫn gắn 1 tenant "đại diện"
+		// để tương thích với logic quyền xem hiện tại (tenant chỉ xem hóa đơn của
+		// chính mình theo tenant_id). Mặc định lấy người được gán đầu tiên.
+		// TODO: nếu cần MỌI tenant cùng phòng đều xem được hóa đơn, cân nhắc đổi
+		// InvoiceStatus/Invoice sang lọc theo room_id + room.TenantIDs thay vì tenant_id.
+		TenantID: room.TenantIDs[0],
 
 		Month: req.Month,
 		Year:  req.Year,

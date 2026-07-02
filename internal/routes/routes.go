@@ -80,6 +80,8 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 			users.GET("", userHandler.ListTenants)
 			users.GET("/:id", userHandler.GetTenant)
 			users.PUT("/:id", userHandler.UpdateTenant)
+			users.PUT("/:id/room", userHandler.AssignRoom)      // gán/đổi phòng cho tenant có sẵn
+			users.DELETE("/:id/room", userHandler.UnassignRoom) // trả phòng cho 1 tenant cụ thể
 		}
 
 		// Rooms - manager full quyền, tenant chỉ xem (đọc, lọc theo mình trong handler)

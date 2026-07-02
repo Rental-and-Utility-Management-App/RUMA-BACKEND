@@ -113,7 +113,7 @@ func (h *RoomHandler) ListRooms(c *gin.Context) {
 			utils.Error(c, http.StatusBadRequest, "User ID không hợp lệ")
 			return
 		}
-		filter["tenant_id"] = userID
+		filter["tenant_ids"] = userID // Mongo tự khớp nếu userID nằm trong mảng tenant_ids
 	}
 
 	cursor, err := roomsCol.Find(ctx, filter)
@@ -167,7 +167,8 @@ func (h *RoomHandler) GetRoom(c *gin.Context) {
 	role := c.GetString("role")
 	if role == string(models.RoleTenant) {
 		userIDStr := c.GetString("user_id")
-		if room.TenantID == nil || room.TenantID.Hex() != userIDStr {
+		userID, err := primitive.ObjectIDFromHex(userIDStr)
+		if err != nil || !containsObjectID(room.TenantIDs, userID) {
 			utils.Error(c, http.StatusForbidden, "Bạn không có quyền xem phòng này")
 			return
 		}
@@ -178,15 +179,15 @@ func (h *RoomHandler) GetRoom(c *gin.Context) {
 
 // Sửa Note thành con trỏ *string để có thể xóa trắng ghi chú
 type updateRoomRequest struct {
-	Name                   string   `json:"name"`
-	Floor                  *int     `json:"floor"`
-	MonthlyRent            *float64 `json:"monthly_rent"`
-	ElectricPrice          *float64 `json:"price_electricity"`
-	WaterPrice             *float64 `json:"price_water"`
-	Occupants              *int     `json:"occupants"`
-	ManagementFeePerPerson *float64 `json:"management_fee_per_person"`
-	Status                 string   `json:"status"`
-	Note                   *string  `json:"note"`
+	Name                   string            `json:"name"`
+	Floor                  *int              `json:"floor"`
+	MonthlyRent            *float64          `json:"monthly_rent"`
+	ElectricPrice          *float64          `json:"price_electricity"`
+	WaterPrice             *float64          `json:"price_water"`
+	Occupants              *int              `json:"occupants"`
+	ManagementFeePerPerson *float64          `json:"management_fee_per_person"`
+	Status                 models.RoomStatus `json:"status" binding:"omitempty,oneof=available occupied"`
+	Note                   *string           `json:"note"`
 }
 
 // UpdateRoom godoc
@@ -333,16 +334,19 @@ func (h *RoomHandler) CheckoutRoom(c *gin.Context) {
 		return
 	}
 
-	if room.TenantID == nil {
+	if len(room.TenantIDs) == 0 {
 		utils.Error(c, http.StatusConflict, "Phòng hiện đang trống, không có người thuê để trả phòng")
 		return
 	}
 
-	tenantID := *room.TenantID
+	// Trả TOÀN BỘ phòng: gỡ hết tenant đang ở (phòng có thể có nhiều người).
+	// Nếu chỉ muốn trả phòng cho 1 tenant cụ thể (còn người khác ở lại),
+	// dùng DELETE /api/users/:id/room thay vì endpoint này.
+	tenantIDs := room.TenantIDs
 
 	_, err = roomsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
-		"$set":   bson.M{"status": models.RoomStatusAvailable, "updated_at": time.Now()},
-		"$unset": bson.M{"tenant_id": ""},
+		"$set":   bson.M{"status": models.RoomStatusAvailable, "occupants": 0, "updated_at": time.Now()},
+		"$unset": bson.M{"tenant_ids": ""},
 	})
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật phòng")
@@ -350,7 +354,7 @@ func (h *RoomHandler) CheckoutRoom(c *gin.Context) {
 	}
 
 	usersCol := config.GetCollection("users")
-	_, err = usersCol.UpdateOne(ctx, bson.M{"_id": tenantID}, bson.M{
+	_, err = usersCol.UpdateMany(ctx, bson.M{"_id": bson.M{"$in": tenantIDs}}, bson.M{
 		"$set":   bson.M{"updated_at": time.Now()},
 		"$unset": bson.M{"room_id": ""},
 	})
@@ -361,7 +365,7 @@ func (h *RoomHandler) CheckoutRoom(c *gin.Context) {
 	}
 
 	utils.Success(c, http.StatusOK, "Trả phòng thành công", gin.H{
-		"room_id":   id,
-		"tenant_id": tenantID,
+		"room_id":    id,
+		"tenant_ids": tenantIDs,
 	})
 }

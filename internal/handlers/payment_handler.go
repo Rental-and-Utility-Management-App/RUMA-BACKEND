@@ -29,11 +29,11 @@ func NewPaymentHandler(cfg *config.Config) *PaymentHandler {
 }
 
 type createPaymentRequest struct {
-	InvoiceID string  `json:"invoice_id" binding:"required"`
-	Amount    float64 `json:"amount" binding:"required,gt=0"`
-	Method    string  `json:"method" binding:"required"` // cash | bank_transfer | other
-	Note      string  `json:"note"`
-	PaidAt    string  `json:"paid_at"` // format: 2006-01-02, mặc định là hôm nay
+	InvoiceID string               `json:"invoice_id" binding:"required"`
+	Amount    float64              `json:"amount" binding:"required,gt=0"`
+	Method    models.PaymentMethod `json:"method" binding:"required,oneof=cash bank_transfer other"`
+	Note      string               `json:"note"`
+	PaidAt    string               `json:"paid_at"` // format: 2006-01-02, mặc định là hôm nay
 }
 
 // CreatePayment godoc
@@ -98,15 +98,13 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		}
 	}
 
-	method := models.PaymentMethod(req.Method)
-
 	payment := models.Payment{
 		ID:          primitive.NewObjectID(),
 		InvoiceID:   invoiceID,
 		RoomID:      invoice.RoomID,
 		TenantID:    invoice.TenantID,
 		Amount:      req.Amount,
-		Method:      method,
+		Method:      req.Method,
 		Note:        req.Note,
 		ConfirmedBy: confirmedBy,
 		PaidAt:      paidAt,

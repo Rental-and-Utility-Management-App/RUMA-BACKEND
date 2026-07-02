@@ -14,6 +14,18 @@ const (
 	PaymentMethodOther    PaymentMethod = "other"
 )
 
+// ValidPaymentMethods liệt kê toàn bộ giá trị hợp lệ, dùng để validate input.
+var ValidPaymentMethods = []PaymentMethod{PaymentMethodCash, PaymentMethodTransfer, PaymentMethodOther}
+
+// IsValid kiểm tra PaymentMethod có phải là 1 trong các giá trị enum hợp lệ không.
+func (m PaymentMethod) IsValid() bool {
+	switch m {
+	case PaymentMethodCash, PaymentMethodTransfer, PaymentMethodOther:
+		return true
+	}
+	return false
+}
+
 // Payment = 1 lần thanh toán, gắn với 1 invoice (invoice có thể thanh toán nhiều lần)
 type Payment struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`

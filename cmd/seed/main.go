@@ -1,201 +1,129 @@
-package main
-
-// Seed script cho RUMA-BACKEND.
-//
-// Cách chạy (từ thư mục gốc project, nơi có go.mod và file .env):
-//   go run ./cmd/seed
-//
-// Script sẽ tạo:
-//   - 1 tài khoản "manager" (role admin/quản lý trong hệ thống này) — phone: 0900000001, password: Admin@123
-//   - 1 tài khoản "tenant" (người thuê)                              — phone: 0900000002, password: Tenant@123
-//   - 5 phòng mẫu (rooms), trong đó 1 phòng được gán cho tenant ở trên
-//
-// Lưu ý: model User trong hệ thống chỉ có 2 role là "manager" và "tenant"
-// (xem internal/models/user.go), không có role riêng tên "admin" — nên
-// "manager" chính là tài khoản quản trị/admin trong app này.
-//
-// Script an toàn để chạy nhiều lần: nếu phone/code đã tồn tại thì sẽ
-// cập nhật (upsert) thay vì tạo trùng.
-//
-// Field giá điện/nước đã đổi tên thành "price_electricity" và "price_water"
-// (khớp với internal/models/room.go). Status của phòng được tự suy ra:
-// có TenantID -> "occupied", không có -> "available" (không cần set tay).
+package routes
 
 import (
 	"context"
-	"log"
+	"net/http"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"github.com/gin-gonic/gin"
+
+	// 1. Thêm 3 thư viện này của Swagger
+	_ "rental-app/docs" // CỰC KỲ QUAN TRỌNG: Import thư mục docs do lệnh 'swag init' sinh ra
+
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"rental-app/internal/config"
+	"rental-app/internal/handlers"
+	"rental-app/internal/middleware"
 	"rental-app/internal/models"
 	"rental-app/internal/utils"
 )
 
-func main() {
-	cfg := config.Load()
-	config.ConnectMongo(cfg)
+func SetupRoutes(r *gin.Engine, cfg *config.Config) {
+	// 0. Bật CORS cho toàn bộ API (đặt trước mọi route khác)
+	r.Use(middleware.CORS(cfg.AllowedOrigins))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// Healthcheck - dùng cho Docker HEALTHCHECK, load balancer, uptime monitor...
+	// Kiểm tra luôn kết nối MongoDB để phản ánh đúng tình trạng "sẵn sàng phục vụ".
+	r.GET("/healthz", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
 
-	// ---------- 1. Tài khoản admin/manager ----------
-	adminID := upsertUser(ctx, models.User{
-		FullName: "Manager",
-		Phone:    "0932000035",
-		Email:    "gg.fctaiphat@yahoo.com",
-		Role:     models.RoleManager,
-		IsActive: true,
-	}, "Admin@123")
-	log.Println("✅ Tạo/cập nhật tài khoản admin (manager):", adminID.Hex())
+		if err := config.Client.Ping(ctx, nil); err != nil {
+			utils.Error(c, http.StatusServiceUnavailable, "Không kết nối được cơ sở dữ liệu")
+			return
+		}
 
-	// ---------- 2. Tài khoản người thuê ----------
-	tenantRoomID, err := primitive.ObjectIDFromHex("6a45e17faca034aae8905290")
-	if err != nil {
-		log.Fatalf("ID phòng tenant không hợp lệ: %v", err)
+		utils.Success(c, http.StatusOK, "OK", gin.H{"status": "healthy"})
+	})
+
+	// 2. Bật giao diện Swagger Web (Route này để ở ngoài cùng, ai cũng truy cập được để xem docs)
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	authHandler := handlers.NewAuthHandler(cfg)
+	userHandler := handlers.NewUserHandler()
+	roomHandler := handlers.NewRoomHandler()
+	invoiceHandler := handlers.NewInvoiceHandler(cfg)
+	paymentHandler := handlers.NewPaymentHandler(cfg)
+
+	// Rate limit riêng cho login: tối đa 5 lần thử/phút theo từng IP, chống brute-force.
+	loginLimiter := middleware.NewRateLimiter(5, time.Minute)
+
+	api := r.Group("/api")
+
+	// ---- Public routes ----
+	auth := api.Group("/auth")
+	{
+		auth.POST("/login", loginLimiter.Middleware(), authHandler.Login)
 	}
 
-	tenantID := upsertUser(ctx, models.User{
-		FullName: "Vũ Thảo Minh",
-		Phone:    "0963797589",
-		Email:    "vuthaominh14@gmail.com",
-		Role:     models.RoleTenant,
-		IsActive: true,
-		RoomID:   &tenantRoomID,
-	}, "Tenant@123")
-	log.Println("✅ Tạo/cập nhật tài khoản tenant:", tenantID.Hex())
+	// Webhook nhận báo giao dịch từ SePay - không qua JWT (bên thứ 3 gọi vào),
+	// tự xác thực bằng API Key riêng (xem SepayWebhook handler).
+	webhooks := api.Group("/webhooks")
+	{
+		webhooks.POST("/sepay", paymentHandler.SepayWebhook)
+	}
 
-	// ---------- 3. Phòng mẫu ----------
-	rooms := []models.Room{
+	// ---- Protected routes (cần JWT) ----
+	protected := api.Group("")
+	protected.Use(middleware.AuthRequired(cfg.JWTSecret))
+	{
+		protected.GET("/auth/me", authHandler.Me)
+		protected.PUT("/auth/change-password", authHandler.ChangePassword)
+
+		// Users - chỉ manager quản lý tenant
+		users := protected.Group("/users")
+		users.Use(middleware.RequireRole(string(models.RoleManager)))
 		{
-			Code: "P101", Name: "Phòng 101", Floor: 1,
-			MonthlyRent: 2500000, ElectricPrice: 3500, WaterPrice: 15000,
-			TenantID: &tenantID, // có tenant -> status sẽ tự động là "occupied"
-			Note:     "Phòng đã có người thuê (dữ liệu mẫu)",
-		},
+			users.POST("", userHandler.CreateTenant)
+			users.GET("", userHandler.ListTenants)
+			users.GET("/:id", userHandler.GetTenant)
+			users.PUT("/:id", userHandler.UpdateTenant)
+			users.PUT("/:id/room", userHandler.AssignRoom)      // gán/đổi phòng cho tenant có sẵn
+			users.DELETE("/:id/room", userHandler.UnassignRoom) // trả phòng cho 1 tenant cụ thể
+		}
+
+		// Rooms - manager full quyền, tenant chỉ xem (đọc, lọc theo mình trong handler)
+		rooms := protected.Group("/rooms")
 		{
-			Code: "P102", Name: "Phòng 102", Floor: 1,
-			MonthlyRent: 2500000, ElectricPrice: 3500, WaterPrice: 15000,
-			// không có TenantID -> status tự động là "available"
-		},
+			rooms.GET("", roomHandler.ListRooms) // cả 2 role, tenant tự lọc trong handler
+			rooms.GET("/:id", roomHandler.GetRoom)
+
+			roomsManagerOnly := rooms.Group("")
+			roomsManagerOnly.Use(middleware.RequireRole(string(models.RoleManager)))
+			{
+				roomsManagerOnly.POST("", roomHandler.CreateRoom)
+				roomsManagerOnly.PUT("/:id", roomHandler.UpdateRoom)
+				roomsManagerOnly.DELETE("/:id", roomHandler.DeleteRoom)
+				roomsManagerOnly.POST("/:id/checkout", roomHandler.CheckoutRoom)
+			}
+		}
+
+		// Invoices - manager tạo, cả 2 role xem (tự lọc theo quyền)
+		invoices := protected.Group("/invoices")
 		{
-			Code: "P201", Name: "Phòng 201", Floor: 2,
-			MonthlyRent: 3000000, ElectricPrice: 3500, WaterPrice: 15000,
-		},
+			invoices.GET("", invoiceHandler.ListInvoices)
+			invoices.GET("/:id", invoiceHandler.GetInvoice)
+			invoices.GET("/:id/qr-code", invoiceHandler.GetInvoiceQRCode)
+
+			invoicesManagerOnly := invoices.Group("")
+			invoicesManagerOnly.Use(middleware.RequireRole(string(models.RoleManager)))
+			{
+				invoicesManagerOnly.POST("", invoiceHandler.CreateInvoice)
+			}
+		}
+
+		// Payments - manager ghi nhận, cả 2 role xem
+		payments := protected.Group("/payments")
 		{
-			Code: "P202", Name: "Phòng 202", Floor: 2,
-			MonthlyRent: 3000000, ElectricPrice: 3500, WaterPrice: 15000,
-		},
-		{
-			Code: "P301", Name: "Phòng 301 (Deluxe)", Floor: 3,
-			MonthlyRent: 4200000, ElectricPrice: 3800, WaterPrice: 18000,
-		},
+			payments.GET("", paymentHandler.ListPayments)
+
+			paymentsManagerOnly := payments.Group("")
+			paymentsManagerOnly.Use(middleware.RequireRole(string(models.RoleManager)))
+			{
+				paymentsManagerOnly.POST("", paymentHandler.CreatePayment)
+			}
+		}
 	}
-
-	for _, room := range rooms {
-		id := upsertRoom(ctx, room)
-		log.Printf("✅ Tạo/cập nhật phòng %s: %s\n", room.Code, id.Hex())
-	}
-
-	log.Println("🎉 Seed dữ liệu hoàn tất.")
-}
-
-// upsertUser tạo mới hoặc cập nhật user theo số điện thoại (unique key),
-// trả về ObjectID của user.
-func upsertUser(ctx context.Context, u models.User, plainPassword string) primitive.ObjectID {
-	hash, err := utils.HashPassword(plainPassword)
-	if err != nil {
-		log.Fatalf("Lỗi hash password cho %s: %v", u.Phone, err)
-	}
-	u.PasswordHash = hash
-
-	col := config.GetCollection("users")
-	now := time.Now()
-
-	filter := bson.M{"phone": u.Phone}
-	update := bson.M{
-		"$set": bson.M{
-			"full_name":     u.FullName,
-			"email":         u.Email,
-			"password_hash": u.PasswordHash,
-			"role":          u.Role,
-			"room_id":       u.RoomID,
-			"is_active":     u.IsActive,
-			"updated_at":    now,
-		},
-		"$setOnInsert": bson.M{
-			"phone":      u.Phone,
-			"created_at": now,
-		},
-	}
-
-	opts := options.Update().SetUpsert(true)
-	res, err := col.UpdateOne(ctx, filter, update, opts)
-	if err != nil {
-		log.Fatalf("Lỗi upsert user %s: %v", u.Phone, err)
-	}
-
-	if res.UpsertedID != nil {
-		return res.UpsertedID.(primitive.ObjectID)
-	}
-
-	// Đã tồn tại từ trước (không phải insert mới) -> lấy lại ID
-	var existing models.User
-	if err := col.FindOne(ctx, filter).Decode(&existing); err != nil {
-		log.Fatalf("Lỗi lấy lại user %s sau upsert: %v", u.Phone, err)
-	}
-	return existing.ID
-}
-
-// upsertRoom tạo mới hoặc cập nhật phòng theo mã phòng (unique key),
-// trả về ObjectID của phòng.
-//
-// Status được tự suy ra từ TenantID: có tenant -> "occupied",
-// không có tenant -> "available". Không cần set Status khi khai báo room.
-func upsertRoom(ctx context.Context, r models.Room) primitive.ObjectID {
-	col := config.GetCollection("rooms")
-	now := time.Now()
-
-	status := models.RoomStatusAvailable
-	if r.TenantID != nil {
-		status = models.RoomStatusOccupied
-	}
-
-	filter := bson.M{"code": r.Code}
-	update := bson.M{
-		"$set": bson.M{
-			"name":              r.Name,
-			"floor":             r.Floor,
-			"tenant_id":         r.TenantID,
-			"monthly_rent":      r.MonthlyRent,
-			"price_electricity": r.ElectricPrice,
-			"price_water":       r.WaterPrice,
-			"status":            status,
-			"note":              r.Note,
-			"updated_at":        now,
-		},
-		"$setOnInsert": bson.M{
-			"code":       r.Code,
-			"created_at": now,
-		},
-	}
-
-	opts := options.Update().SetUpsert(true)
-	res, err := col.UpdateOne(ctx, filter, update, opts)
-	if err != nil {
-		log.Fatalf("Lỗi upsert room %s: %v", r.Code, err)
-	}
-
-	if res.UpsertedID != nil {
-		return res.UpsertedID.(primitive.ObjectID)
-	}
-
-	var existing models.Room
-	if err := col.FindOne(ctx, filter).Decode(&existing); err != nil {
-		log.Fatalf("Lỗi lấy lại room %s sau upsert: %v", r.Code, err)
-	}
-	return existing.ID
 }
