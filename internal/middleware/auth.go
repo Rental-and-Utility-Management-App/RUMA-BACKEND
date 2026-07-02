@@ -19,14 +19,21 @@ func AuthRequired(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
+		// Cho phép cả 2 dạng: "Bearer <token>" (chuẩn HTTP) và chỉ "<token>"
+		// (tiện cho Swagger UI - dán thẳng token vào ô Authorize, không cần
+		// gõ thêm "Bearer " phía trước).
+		tokenStr := authHeader
 		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			utils.Error(c, http.StatusUnauthorized, "Định dạng token không hợp lệ")
-			c.Abort()
-			return
+		if len(parts) == 2 {
+			if parts[0] != "Bearer" {
+				utils.Error(c, http.StatusUnauthorized, "Định dạng token không hợp lệ")
+				c.Abort()
+				return
+			}
+			tokenStr = parts[1]
 		}
 
-		claims, err := utils.ParseToken(parts[1], jwtSecret)
+		claims, err := utils.ParseToken(tokenStr, jwtSecret)
 		if err != nil {
 			utils.Error(c, http.StatusUnauthorized, "Token không hợp lệ hoặc đã hết hạn")
 			c.Abort()

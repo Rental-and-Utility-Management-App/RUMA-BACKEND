@@ -24,8 +24,8 @@ func NewAuthHandler(cfg *config.Config) *AuthHandler {
 }
 
 type loginRequest struct {
-	Phone    string `json:"phone" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Phone    string `json:"phone" binding:"required" extensions:"x-order=0"`
+	Password string `json:"password" binding:"required" extensions:"x-order=1"`
 }
 
 // Login godoc
@@ -112,8 +112,8 @@ func (h *AuthHandler) Me(c *gin.Context) {
 }
 
 type changePasswordRequest struct {
-	OldPassword string `json:"old_password" binding:"required"`
-	NewPassword string `json:"new_password" binding:"required,min=6"`
+	OldPassword string `json:"old_password" binding:"required" extensions:"x-order=0"`
+	NewPassword string `json:"new_password" binding:"required,min=6" extensions:"x-order=1"`
 }
 
 // ChangePassword godoc

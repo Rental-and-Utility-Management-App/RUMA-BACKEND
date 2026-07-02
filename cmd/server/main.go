@@ -27,7 +27,7 @@ import (
 // @securityDefinitions.apikey BearerAuth
 // @in header
 // @name Authorization
-// @description Nhập theo định dạng: Bearer {token}
+// @description Dán trực tiếp giá trị token vào đây (không cần gõ "Bearer " phía trước, server tự nhận diện cả 2 dạng)
 func main() {
 	cfg := config.Load()
 
