@@ -44,21 +44,27 @@ func main() {
 
 	// ---------- 1. Tài khoản admin/manager ----------
 	adminID := upsertUser(ctx, models.User{
-		FullName: "Quản trị viên",
-		Phone:    "0900000001",
-		Email:    "admin@ruma.local",
+		FullName: "Manager",
+		Phone:    "0932000035",
+		Email:    "gg.fctaiphat@yahoo.com",
 		Role:     models.RoleManager,
 		IsActive: true,
 	}, "Admin@123")
 	log.Println("✅ Tạo/cập nhật tài khoản admin (manager):", adminID.Hex())
 
 	// ---------- 2. Tài khoản người thuê ----------
+	tenantRoomID, err := primitive.ObjectIDFromHex("6a45e17faca034aae8905290")
+	if err != nil {
+		log.Fatalf("ID phòng tenant không hợp lệ: %v", err)
+	}
+
 	tenantID := upsertUser(ctx, models.User{
-		FullName: "Nguyễn Văn Thuê",
-		Phone:    "0900000002",
-		Email:    "tenant@ruma.local",
+		FullName: "Vũ Thảo Minh",
+		Phone:    "0963797589",
+		Email:    "vuthaominh14@gmail.com",
 		Role:     models.RoleTenant,
 		IsActive: true,
+		RoomID:   &tenantRoomID,
 	}, "Tenant@123")
 	log.Println("✅ Tạo/cập nhật tài khoản tenant:", tenantID.Hex())
 
@@ -82,12 +88,10 @@ func main() {
 		{
 			Code: "P202", Name: "Phòng 202", Floor: 2,
 			MonthlyRent: 3000000, ElectricPrice: 3500, WaterPrice: 15000,
-			Note: "Phòng góc, có ban công",
 		},
 		{
 			Code: "P301", Name: "Phòng 301 (Deluxe)", Floor: 3,
 			MonthlyRent: 4200000, ElectricPrice: 3800, WaterPrice: 18000,
-			Note: "Phòng rộng, có gác lửng",
 		},
 	}
 
