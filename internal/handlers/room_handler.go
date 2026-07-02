@@ -428,7 +428,6 @@ func (h *RoomHandler) CheckoutRoom(c *gin.Context) {
 		"$unset": bson.M{"room_id": ""},
 	})
 	if err != nil {
-		// Phòng đã được trả nhưng gỡ liên kết ở tài khoản tenant thất bại -> báo rõ để manager kiểm tra lại thủ công.
 		utils.Error(c, http.StatusInternalServerError, "Trả phòng thành công nhưng cập nhật tài khoản người thuê thất bại")
 		return
 	}
