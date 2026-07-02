@@ -181,6 +181,23 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 	electricAmount := (req.ElectricNew - electricOld) * room.ElectricPrice
 	waterAmount := (req.WaterNew - waterOld) * room.WaterPrice
 
+	// Xác định giá thuê áp dụng cho hóa đơn: nếu phòng đang có hợp đồng active,
+	// PHẢI dùng monthly_rent đã chốt trong hợp đồng (snapshot lúc ký/gia hạn),
+	// KHÔNG dùng room.MonthlyRent (giá niêm yết hiện tại) - tránh việc manager
+	// sửa giá niêm yết để chào khách mới lại vô tình đổi luôn tiền nhà của
+	// khách đang thuê giữa hợp đồng với giá đã thỏa thuận khác.
+	// Chỉ fallback về giá niêm yết của phòng khi phòng chưa/không có hợp đồng
+	// active (trường hợp gán phòng không qua hợp đồng chính thức).
+	rentAmount := room.MonthlyRent
+	contractsCol := config.GetCollection("contracts")
+	var activeContract models.Contract
+	if err := contractsCol.FindOne(ctx, bson.M{"room_id": roomID, "status": models.ContractStatusActive}).Decode(&activeContract); err == nil {
+		rentAmount = activeContract.MonthlyRent
+	} else if err != mongo.ErrNoDocuments {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
 	occupants := room.Occupants
 	if req.Occupants != nil {
 		// Occupants nhập tay chỉ được chấp nhận trong khoảng hợp lý: tối thiểu 1,
@@ -198,7 +215,7 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 	}
 	managementFeeAmount := float64(occupants) * room.ManagementFeePerPerson
 
-	totalAmount := room.MonthlyRent + electricAmount + waterAmount + managementFeeAmount + req.OtherFees
+	totalAmount := rentAmount + electricAmount + waterAmount + managementFeeAmount + req.OtherFees
 
 	dueDate := time.Now().AddDate(0, 0, 7)
 	if req.DueDate != "" {
@@ -223,7 +240,7 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 		Month: req.Month,
 		Year:  req.Year,
 
-		RentAmount: room.MonthlyRent,
+		RentAmount: rentAmount,
 
 		ElectricOld:    electricOld,
 		ElectricNew:    req.ElectricNew,
