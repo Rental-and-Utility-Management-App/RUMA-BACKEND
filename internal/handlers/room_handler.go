@@ -331,6 +331,20 @@ func (h *RoomHandler) DeleteRoom(c *gin.Context) {
 		return
 	}
 
+	// Tương tự: chặn xóa nếu phòng đã từng gắn với hợp đồng nào (kể cả đã đóng) -
+	// xóa cứng sẽ làm contracts/deposit_transactions cũ mồ côi (room_id trỏ tới
+	// phòng không còn tồn tại), mất dấu lịch sử thu/hoàn cọc.
+	contractsCol := config.GetCollection("contracts")
+	contractCount, err := contractsCol.CountDocuments(ctx, bson.M{"room_id": id})
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if contractCount > 0 {
+		utils.Error(c, http.StatusConflict, "Không thể xóa phòng đã từng gắn với hợp đồng thuê (sẽ làm mồ côi dữ liệu lịch sử hợp đồng/cọc); hãy đặt status phù hợp thay vì xóa")
+		return
+	}
+
 	if _, err := roomsCol.DeleteOne(ctx, bson.M{"_id": id}); err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Không thể xóa phòng")
 		return
