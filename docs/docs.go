@@ -510,6 +510,98 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/contracts/{id}/tenants": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager thêm 1 tenant có sẵn vào hợp đồng đang active (ở ghép giữa chừng), gán luôn tenant đó vào phòng của hợp đồng. Tenant phải chưa thuộc phòng nào khác và chưa đứng tên hợp đồng active nào khác.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Contracts"
+                ],
+                "summary": "Thêm 1 người ở ghép vào hợp đồng đang active",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Contract ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Tenant cần thêm",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.addTenantToContractRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/contracts/{id}/tenants/{tenantId}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager gỡ 1 tenant khỏi hợp đồng đang active (những tenant khác vẫn ở lại, hợp đồng vẫn active). Không cho gỡ nếu đây là tenant cuối cùng của hợp đồng - trường hợp đó phải dùng /checkout hoặc /cancel để đóng hẳn hợp đồng.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Contracts"
+                ],
+                "summary": "Gỡ 1 người ở ghép khỏi hợp đồng đang active",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Contract ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tenant ID cần gỡ",
+                        "name": "tenantId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/invoices": {
             "get": {
                 "security": [
@@ -627,6 +719,127 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager sửa hóa đơn tạo sai. CHỈ cho phép sửa khi hóa đơn chưa ghi nhận thanh toán nào (paid_amount == 0) - nếu đã có thanh toán, hãy hủy hóa đơn (cancel) rồi tạo lại để tránh làm lệch số tiền đã thu.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Invoices"
+                ],
+                "summary": "Sửa hóa đơn",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Invoice ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Dữ liệu cập nhật",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.updateInvoiceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/invoices/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager hủy 1 hóa đơn tạo sai. CHỈ cho phép hủy khi chưa ghi nhận thanh toán nào (paid_amount == 0), để không mất dấu vết dòng tiền đã thu. Hóa đơn hủy vẫn được giữ lại (soft-cancel) để tra cứu, không tính vào check trùng phòng/tháng khi tạo hóa đơn mới.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Invoices"
+                ],
+                "summary": "Hủy hóa đơn",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Invoice ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/invoices/{id}/qr-code": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sinh mã VietQR (chuyển khoản ngân hàng) với số tiền = số tiền còn lại của hóa đơn, nội dung chuyển khoản tự động điền theo mã phòng + tháng/năm. Cần cấu hình BANK_ID, BANK_ACCOUNT_NO, BANK_ACCOUNT_NAME trong biến môi trường.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Invoices"
+                ],
+                "summary": "Lấy mã QR chuyển khoản cho hóa đơn",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Invoice ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
             }
         },
         "/api/payments": {
@@ -696,6 +909,89 @@ const docTemplate = `{
                 "responses": {
                     "201": {
                         "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/payments/{id}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager sửa lại 1 payment ghi nhận nhầm (sai số tiền/phương thức/ngày). Invoice liên quan sẽ được tính lại paid_amount/status từ tổng các payment thực tế còn lại. Không cho sửa payment tự động qua webhook (is_auto_confirmed) vì phải khớp với giao dịch ngân hàng thật. Số tiền sửa lại không được làm tổng thanh toán vượt quá total_amount của hóa đơn.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Sửa 1 lần thanh toán",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Dữ liệu cập nhật",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.updatePaymentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager xóa 1 payment ghi nhận nhầm. Invoice liên quan sẽ được tính lại paid_amount/status từ tổng các payment thực tế còn lại. Không cho xóa payment tự động qua webhook (is_auto_confirmed) - dữ liệu đó phải khớp với giao dịch ngân hàng thật, không nên xóa tay.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Xóa 1 lần thanh toán",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1077,9 +1373,143 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/api/users/{id}/room": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager gán 1 tenant đã tồn tại vào 1 phòng, hoặc đổi tenant đó sang phòng khác nếu đang ở phòng cũ. 1 phòng có thể chứa nhiều tenant (ở ghép). Có validate để tránh gán trùng (tenant đã ở đúng phòng đó rồi thì báo lỗi thay vì gán lại vô nghĩa).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Users"
+                ],
+                "summary": "Gán/đổi phòng cho người thuê có sẵn",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Tenant ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Phòng muốn gán",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.assignRoomRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager gỡ 1 tenant khỏi phòng hiện tại (những tenant khác ở ghép cùng phòng, nếu có, không bị ảnh hưởng). Phòng tự chuyển về \"available\" khi không còn tenant nào.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Users"
+                ],
+                "summary": "Trả phòng cho 1 người thuê cụ thể",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Tenant ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/webhooks/sepay": {
+            "post": {
+                "description": "Endpoint public (không cần JWT) để SePay gọi đến mỗi khi có biến động số dư. Xác thực bằng header Authorization: Apikey <SEPAY_WEBHOOK_API_KEY>. Tự động đối soát theo mã tham chiếu trong nội dung chuyển khoản và ghi nhận thanh toán.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Webhook nhận báo giao dịch từ SePay",
+                "parameters": [
+                    {
+                        "description": "Payload từ SePay",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.sepayWebhookPayload"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "handlers.addTenantToContractRequest": {
+            "type": "object",
+            "properties": {
+                "tenant_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.assignRoomRequest": {
+            "type": "object",
+            "properties": {
+                "room_id": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.changePasswordRequest": {
             "type": "object",
             "required": [
@@ -1333,6 +1763,47 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.sepayWebhookPayload": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "gateway": {
+                    "type": "string"
+                },
+                "transactionDate": {
+                    "type": "string"
+                },
+                "accountNumber": {
+                    "type": "string"
+                },
+                "subAccount": {
+                    "type": "string"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "content": {
+                    "type": "string"
+                },
+                "transferType": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "transferAmount": {
+                    "type": "number"
+                },
+                "accumulated": {
+                    "type": "number"
+                },
+                "referenceCode": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.updateContractRequest": {
             "type": "object",
             "properties": {
@@ -1343,6 +1814,46 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "note": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.updateInvoiceRequest": {
+            "type": "object",
+            "properties": {
+                "electric_new": {
+                    "type": "number"
+                },
+                "water_new": {
+                    "type": "number"
+                },
+                "other_fees": {
+                    "type": "number"
+                },
+                "other_note": {
+                    "type": "string"
+                },
+                "occupants": {
+                    "type": "integer"
+                },
+                "due_date": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.updatePaymentRequest": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "paid_at": {
                     "type": "string"
                 }
             }
@@ -1396,6 +1907,7 @@ const docTemplate = `{
             "in": "header"
         }
     }
+
 }`
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it

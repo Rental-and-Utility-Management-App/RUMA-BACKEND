@@ -85,8 +85,7 @@ paths:
     get:
       security:
       - BearerAuth: []
-      description: Manager xem tất cả (lọc được theo room_id, status). Tenant chỉ
-        xem hợp đồng của mình.
+      description: Manager xem tất cả (lọc được theo room_id, status). Tenant chỉ xem hợp đồng của mình.
       consumes:
       - application/json
       produces:
@@ -114,9 +113,7 @@ paths:
     post:
       security:
       - BearerAuth: []
-      description: 'Manager tạo hợp đồng thuê cho 1 nhóm tenant vào 1 phòng: gán tenant
-        vào phòng, khởi tạo thông tin cọc/thời hạn. Phòng đích không được có hợp đồng
-        "active" khác, và tenant không được đang thuộc phòng nào khác.'
+      description: 'Manager tạo hợp đồng thuê cho 1 nhóm tenant vào 1 phòng: gán tenant vào phòng, khởi tạo thông tin cọc/thời hạn. Phòng đích không được có hợp đồng "active" khác, và tenant không được đang thuộc phòng nào khác.'
       consumes:
       - application/json
       produces:
@@ -164,9 +161,7 @@ paths:
     put:
       security:
       - BearerAuth: []
-      description: Sửa ghi chú/giá thuê/tiền cọc thỏa thuận (deposit_amount chỉ sửa
-        được khi chưa thu cọc). Để đổi ngày hết hạn, dùng endpoint gia hạn (/extend).
-        Để kết thúc hợp đồng, dùng /checkout.
+      description: Sửa ghi chú/giá thuê/tiền cọc thỏa thuận (deposit_amount chỉ sửa được khi chưa thu cọc). Để đổi ngày hết hạn, dùng endpoint gia hạn (/extend). Để kết thúc hợp đồng, dùng /checkout.
       consumes:
       - application/json
       produces:
@@ -196,8 +191,7 @@ paths:
     post:
       security:
       - BearerAuth: []
-      description: Chỉ hủy được khi hợp đồng đang active VÀ chưa thu đồng cọc nào.
-        Nếu đã thu cọc, phải dùng /checkout để hoàn/giữ cọc đúng quy trình.
+      description: Chỉ hủy được khi hợp đồng đang active VÀ chưa thu đồng cọc nào. Nếu đã thu cọc, phải dùng /checkout để hoàn/giữ cọc đúng quy trình.
       consumes:
       - application/json
       produces:
@@ -221,9 +215,7 @@ paths:
     post:
       security:
       - BearerAuth: []
-      description: 'Manager xác nhận tenant trả phòng: đóng hợp đồng (ended nếu tới/qua
-        hạn, terminated nếu chấm dứt sớm), hoàn cọc theo refund_amount (có thể giữ
-        lại 1 phần), gỡ toàn bộ tenant của hợp đồng khỏi phòng.'
+      description: 'Manager xác nhận tenant trả phòng: đóng hợp đồng (ended nếu tới/qua hạn, terminated nếu chấm dứt sớm), hoàn cọc theo refund_amount (có thể giữ lại 1 phần), gỡ toàn bộ tenant của hợp đồng khỏi phòng.'
       consumes:
       - application/json
       produces:
@@ -253,8 +245,7 @@ paths:
     post:
       security:
       - BearerAuth: []
-      description: Manager ghi nhận 1 lần thu cọc (có thể thu nhiều lần cho tới khi
-        đủ deposit_amount).
+      description: Manager ghi nhận 1 lần thu cọc (có thể thu nhiều lần cho tới khi đủ deposit_amount).
       consumes:
       - application/json
       produces:
@@ -308,8 +299,7 @@ paths:
     post:
       security:
       - BearerAuth: []
-      description: Manager gia hạn hợp đồng đang active, đẩy end_date ra xa hơn. Lịch
-        sử gia hạn được lưu lại trong renewals để tra cứu.
+      description: Manager gia hạn hợp đồng đang active, đẩy end_date ra xa hơn. Lịch sử gia hạn được lưu lại trong renewals để tra cứu.
       consumes:
       - application/json
       produces:
@@ -335,12 +325,70 @@ paths:
           schema:
             type: object
             additionalProperties: true
+  /api/contracts/{id}/tenants:
+    post:
+      security:
+      - BearerAuth: []
+      description: Manager thêm 1 tenant có sẵn vào hợp đồng đang active (ở ghép giữa chừng), gán luôn tenant đó vào phòng của hợp đồng. Tenant phải chưa thuộc phòng nào khác và chưa đứng tên hợp đồng active nào khác.
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      tags:
+      - Contracts
+      summary: Thêm 1 người ở ghép vào hợp đồng đang active
+      parameters:
+      - type: string
+        description: Contract ID
+        name: id
+        in: path
+        required: true
+      - description: Tenant cần thêm
+        name: request
+        in: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.addTenantToContractRequest'
+      responses:
+        '200':
+          description: OK
+          schema:
+            type: object
+            additionalProperties: true
+  /api/contracts/{id}/tenants/{tenantId}:
+    delete:
+      security:
+      - BearerAuth: []
+      description: Manager gỡ 1 tenant khỏi hợp đồng đang active (những tenant khác vẫn ở lại, hợp đồng vẫn active). Không cho gỡ nếu đây là tenant cuối cùng của hợp đồng - trường hợp đó phải dùng /checkout hoặc /cancel để đóng hẳn hợp đồng.
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      tags:
+      - Contracts
+      summary: Gỡ 1 người ở ghép khỏi hợp đồng đang active
+      parameters:
+      - type: string
+        description: Contract ID
+        name: id
+        in: path
+        required: true
+      - type: string
+        description: Tenant ID cần gỡ
+        name: tenantId
+        in: path
+        required: true
+      responses:
+        '200':
+          description: OK
+          schema:
+            type: object
+            additionalProperties: true
   /api/invoices:
     get:
       security:
       - BearerAuth: []
-      description: Manager xem tất cả, Tenant chỉ xem hóa đơn của mình. Có thể lọc
-        theo room_id, status.
+      description: Manager xem tất cả, Tenant chỉ xem hóa đơn của mình. Có thể lọc theo room_id, status.
       consumes:
       - application/json
       produces:
@@ -411,6 +459,83 @@ paths:
           schema:
             type: object
             additionalProperties: true
+    put:
+      security:
+      - BearerAuth: []
+      description: Manager sửa hóa đơn tạo sai. CHỈ cho phép sửa khi hóa đơn chưa ghi nhận thanh toán nào (paid_amount == 0) - nếu đã có thanh toán, hãy hủy hóa đơn (cancel) rồi tạo lại để tránh làm lệch số tiền đã thu.
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      tags:
+      - Invoices
+      summary: Sửa hóa đơn
+      parameters:
+      - type: string
+        description: Invoice ID
+        name: id
+        in: path
+        required: true
+      - description: Dữ liệu cập nhật
+        name: request
+        in: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.updateInvoiceRequest'
+      responses:
+        '200':
+          description: OK
+          schema:
+            type: object
+            additionalProperties: true
+  /api/invoices/{id}/cancel:
+    post:
+      security:
+      - BearerAuth: []
+      description: Manager hủy 1 hóa đơn tạo sai. CHỈ cho phép hủy khi chưa ghi nhận thanh toán nào (paid_amount == 0), để không mất dấu vết dòng tiền đã thu. Hóa đơn hủy vẫn được giữ lại (soft-cancel) để tra cứu, không tính vào check trùng phòng/tháng khi tạo hóa đơn mới.
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      tags:
+      - Invoices
+      summary: Hủy hóa đơn
+      parameters:
+      - type: string
+        description: Invoice ID
+        name: id
+        in: path
+        required: true
+      responses:
+        '200':
+          description: OK
+          schema:
+            type: object
+            additionalProperties: true
+  /api/invoices/{id}/qr-code:
+    get:
+      security:
+      - BearerAuth: []
+      description: Sinh mã VietQR (chuyển khoản ngân hàng) với số tiền = số tiền còn lại của hóa đơn, nội dung chuyển khoản tự động điền theo mã phòng + tháng/năm. Cần cấu hình BANK_ID, BANK_ACCOUNT_NO, BANK_ACCOUNT_NAME trong biến môi trường.
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      tags:
+      - Invoices
+      summary: Lấy mã QR chuyển khoản cho hóa đơn
+      parameters:
+      - type: string
+        description: Invoice ID
+        name: id
+        in: path
+        required: true
+      responses:
+        '200':
+          description: OK
+          schema:
+            type: object
+            additionalProperties: true
   /api/payments:
     get:
       security:
@@ -455,6 +580,59 @@ paths:
       responses:
         '201':
           description: Created
+          schema:
+            type: object
+            additionalProperties: true
+  /api/payments/{id}:
+    put:
+      security:
+      - BearerAuth: []
+      description: Manager sửa lại 1 payment ghi nhận nhầm (sai số tiền/phương thức/ngày). Invoice liên quan sẽ được tính lại paid_amount/status từ tổng các payment thực tế còn lại. Không cho sửa payment tự động qua webhook (is_auto_confirmed) vì phải khớp với giao dịch ngân hàng thật. Số tiền sửa lại không được làm tổng thanh toán vượt quá total_amount của hóa đơn.
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      tags:
+      - Payments
+      summary: Sửa 1 lần thanh toán
+      parameters:
+      - type: string
+        description: Payment ID
+        name: id
+        in: path
+        required: true
+      - description: Dữ liệu cập nhật
+        name: request
+        in: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.updatePaymentRequest'
+      responses:
+        '200':
+          description: OK
+          schema:
+            type: object
+            additionalProperties: true
+    delete:
+      security:
+      - BearerAuth: []
+      description: Manager xóa 1 payment ghi nhận nhầm. Invoice liên quan sẽ được tính lại paid_amount/status từ tổng các payment thực tế còn lại. Không cho xóa payment tự động qua webhook (is_auto_confirmed) - dữ liệu đó phải khớp với giao dịch ngân hàng thật, không nên xóa tay.
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      tags:
+      - Payments
+      summary: Xóa 1 lần thanh toán
+      parameters:
+      - type: string
+        description: Payment ID
+        name: id
+        in: path
+        required: true
+      responses:
+        '200':
+          description: OK
           schema:
             type: object
             additionalProperties: true
@@ -580,8 +758,7 @@ paths:
     post:
       security:
       - BearerAuth: []
-      description: 'Manager xác nhận người thuê trả phòng: phòng chuyển về trạng thái
-        trống (available),
+      description: 'Manager xác nhận người thuê trả phòng: phòng chuyển về trạng thái trống (available),
 
         gỡ liên kết tenant khỏi phòng và gỡ phòng khỏi tài khoản tenant.
 
@@ -700,7 +877,93 @@ paths:
           schema:
             type: object
             additionalProperties: true
+  /api/users/{id}/room:
+    put:
+      security:
+      - BearerAuth: []
+      description: Manager gán 1 tenant đã tồn tại vào 1 phòng, hoặc đổi tenant đó sang phòng khác nếu đang ở phòng cũ. 1 phòng có thể chứa nhiều tenant (ở ghép). Có validate để tránh gán trùng (tenant đã ở đúng phòng đó rồi thì báo lỗi thay vì gán lại vô nghĩa).
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      tags:
+      - Users
+      summary: Gán/đổi phòng cho người thuê có sẵn
+      parameters:
+      - type: string
+        description: Tenant ID
+        name: id
+        in: path
+        required: true
+      - description: Phòng muốn gán
+        name: request
+        in: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.assignRoomRequest'
+      responses:
+        '200':
+          description: OK
+          schema:
+            type: object
+            additionalProperties: true
+    delete:
+      security:
+      - BearerAuth: []
+      description: Manager gỡ 1 tenant khỏi phòng hiện tại (những tenant khác ở ghép cùng phòng, nếu có, không bị ảnh hưởng). Phòng tự chuyển về "available" khi không còn tenant nào.
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      tags:
+      - Users
+      summary: Trả phòng cho 1 người thuê cụ thể
+      parameters:
+      - type: string
+        description: Tenant ID
+        name: id
+        in: path
+        required: true
+      responses:
+        '200':
+          description: OK
+          schema:
+            type: object
+            additionalProperties: true
+  /api/webhooks/sepay:
+    post:
+      description: 'Endpoint public (không cần JWT) để SePay gọi đến mỗi khi có biến động số dư. Xác thực bằng header Authorization: Apikey <SEPAY_WEBHOOK_API_KEY>. Tự động đối soát theo mã tham chiếu trong nội dung chuyển khoản và ghi nhận thanh toán.'
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      tags:
+      - Payments
+      summary: Webhook nhận báo giao dịch từ SePay
+      parameters:
+      - description: Payload từ SePay
+        name: request
+        in: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.sepayWebhookPayload'
+      responses:
+        '200':
+          description: OK
+          schema:
+            type: object
+            additionalProperties: true
 definitions:
+  handlers.addTenantToContractRequest:
+    type: object
+    properties:
+      tenant_id:
+        type: string
+  handlers.assignRoomRequest:
+    type: object
+    properties:
+      room_id:
+        type: string
   handlers.changePasswordRequest:
     type: object
     required:
@@ -776,14 +1039,11 @@ definitions:
       electric_new:
         type: number
       electric_old:
-        description: 'ElectricOld/WaterOld: để trống (null) để hệ thống TỰ ĐỘNG lấy
-          chỉ số mới nhất
+        description: 'ElectricOld/WaterOld: để trống (null) để hệ thống TỰ ĐỘNG lấy chỉ số mới nhất
 
-          (electric_new/water_new) của hóa đơn gần nhất cùng phòng làm chỉ số cũ tháng
-          này.
+          (electric_new/water_new) của hóa đơn gần nhất cùng phòng làm chỉ số cũ tháng này.
 
-          Chỉ cần nhập tay khi: hóa đơn đầu tiên của phòng, hoặc vừa thay đồng hồ
-          điện/nước mới.'
+          Chỉ cần nhập tay khi: hóa đơn đầu tiên của phòng, hoặc vừa thay đồng hồ điện/nước mới.'
         type: number
       month:
         type: integer
@@ -882,6 +1142,33 @@ definitions:
         type: string
       phone:
         type: string
+  handlers.sepayWebhookPayload:
+    type: object
+    properties:
+      id:
+        type: integer
+      gateway:
+        type: string
+      transactionDate:
+        type: string
+      accountNumber:
+        type: string
+      subAccount:
+        type: string
+      code:
+        type: string
+      content:
+        type: string
+      transferType:
+        type: string
+      description:
+        type: string
+      transferAmount:
+        type: number
+      accumulated:
+        type: number
+      referenceCode:
+        type: string
   handlers.updateContractRequest:
     type: object
     properties:
@@ -890,6 +1177,32 @@ definitions:
       monthly_rent:
         type: number
       note:
+        type: string
+  handlers.updateInvoiceRequest:
+    type: object
+    properties:
+      electric_new:
+        type: number
+      water_new:
+        type: number
+      other_fees:
+        type: number
+      other_note:
+        type: string
+      occupants:
+        type: integer
+      due_date:
+        type: string
+  handlers.updatePaymentRequest:
+    type: object
+    properties:
+      amount:
+        type: number
+      method:
+        type: string
+      note:
+        type: string
+      paid_at:
         type: string
   handlers.updateRoomRequest:
     type: object

@@ -247,14 +247,32 @@ func (h *UserHandler) UpdateTenant(c *gin.Context) {
 	if req.Email != "" {
 		update["email"] = req.Email
 	}
-	if req.IsActive != nil {
-		update["is_active"] = *req.IsActive
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	usersCol := config.GetCollection("users")
+
+	// Không cho khóa đăng nhập (is_active=false) một tenant đang đứng tên hợp
+	// đồng active - tenant đó vẫn đang thực sự ở trọ và cần đăng nhập để xem
+	// hóa đơn/thanh toán của mình. Phải checkout/cancel hợp đồng (tenant thật
+	// sự rời đi) trước khi khóa tài khoản.
+	if req.IsActive != nil && !*req.IsActive {
+		contractsCol := config.GetCollection("contracts")
+		hasActive, err := hasActiveContractForTenant(ctx, contractsCol, id)
+		if err != nil {
+			utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+			return
+		}
+		if hasActive {
+			utils.Error(c, http.StatusConflict, "Người thuê đang đứng tên trong 1 hợp đồng hiệu lực; hãy checkout/cancel hợp đồng đó trước khi khóa tài khoản")
+			return
+		}
+	}
+	if req.IsActive != nil {
+		update["is_active"] = *req.IsActive
+	}
+
 	res, err := usersCol.UpdateOne(ctx, bson.M{"_id": id, "role": models.RoleTenant}, bson.M{"$set": update})
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")

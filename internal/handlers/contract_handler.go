@@ -1013,7 +1013,25 @@ func (h *ContractHandler) AddTenantToContract(c *gin.Context) {
 	}
 
 	now := time.Now()
+
+	// Thứ tự: cập nhật contract.tenant_ids (nguồn sự thật) TRƯỚC, rồi mới đồng
+	// bộ sang room/user; nếu bước đồng bộ lỗi giữa chừng thì rollback lại
+	// contract.tenant_ids, tránh để lại trạng thái "hợp đồng có tenant nhưng
+	// room/user chưa được gán" hoặc ngược lại.
+	if _, err := contractsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
+		"$addToSet": bson.M{"tenant_ids": tenantID},
+		"$set":      bson.M{"updated_at": now},
+	}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Không thể thêm người thuê vào hợp đồng")
+		return
+	}
+
 	if _, err := addTenantToRoom(ctx, roomsCol, contract.RoomID, tenantID); err != nil {
+		// Rollback contract.tenant_ids vì chưa gán được vào phòng thực tế.
+		_, _ = contractsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
+			"$pull": bson.M{"tenant_ids": tenantID},
+			"$set":  bson.M{"updated_at": now},
+		})
 		if err == ErrRoomFull {
 			utils.Error(c, http.StatusConflict, "Phòng đã đủ số người tối đa (capacity), không thể thêm")
 			return
@@ -1024,14 +1042,13 @@ func (h *ContractHandler) AddTenantToContract(c *gin.Context) {
 	if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": tenantID}, bson.M{
 		"$set": bson.M{"room_id": contract.RoomID, "updated_at": now},
 	}); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Đã gán phòng nhưng cập nhật tài khoản người thuê thất bại, cần kiểm tra lại thủ công")
-		return
-	}
-	if _, err := contractsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
-		"$addToSet": bson.M{"tenant_ids": tenantID},
-		"$set":      bson.M{"updated_at": now},
-	}); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Đã gán phòng nhưng cập nhật hợp đồng thất bại, cần kiểm tra lại thủ công")
+		// Rollback cả contract.tenant_ids lẫn room.tenant_ids vì chưa đồng bộ được sang user.
+		_, _ = contractsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
+			"$pull": bson.M{"tenant_ids": tenantID},
+			"$set":  bson.M{"updated_at": now},
+		})
+		_, _ = removeTenantFromRoom(ctx, roomsCol, contract.RoomID, tenantID)
+		utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật tài khoản người thuê, đã hoàn tác thao tác thêm người")
 		return
 	}
 
