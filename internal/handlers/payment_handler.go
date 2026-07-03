@@ -468,6 +468,35 @@ func (h *PaymentHandler) UpdatePayment(c *gin.Context) {
 		return
 	}
 
+	// Sửa amount KHÔNG được làm tổng các payment (sau khi sửa) vượt quá
+	// total_amount của hóa đơn - tránh hóa đơn bị "thanh toán dư" một cách âm
+	// thầm qua đường sửa, trong khi CreatePayment (tạo mới) luôn chặn việc
+	// này. Tính tổng các payment KHÁC (không tính payment đang sửa) rồi cộng
+	// amount mới vào để so sánh cho chính xác.
+	if req.Amount != nil {
+		cursor, err := paymentsCol.Find(ctx, bson.M{"invoice_id": invoice.ID, "_id": bson.M{"$ne": id}})
+		if err != nil {
+			utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+			return
+		}
+		var otherPayments []models.Payment
+		if err := cursor.All(ctx, &otherPayments); err != nil {
+			cursor.Close(ctx)
+			utils.Error(c, http.StatusInternalServerError, "Lỗi đọc dữ liệu")
+			return
+		}
+		cursor.Close(ctx)
+
+		otherTotal := 0.0
+		for _, p := range otherPayments {
+			otherTotal += p.Amount
+		}
+		if otherTotal+*req.Amount > invoice.TotalAmount {
+			utils.Error(c, http.StatusBadRequest, "Số tiền sửa lại khiến tổng thanh toán vượt quá total_amount của hóa đơn")
+			return
+		}
+	}
+
 	update := bson.M{}
 	if req.Amount != nil {
 		update["amount"] = *req.Amount

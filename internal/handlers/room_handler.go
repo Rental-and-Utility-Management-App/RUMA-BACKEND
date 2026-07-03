@@ -235,14 +235,8 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 	if req.WaterPrice != nil {
 		update["price_water"] = *req.WaterPrice
 	}
-	if req.Occupants != nil {
-		update["occupants"] = *req.Occupants
-	}
 	if req.ManagementFeePerPerson != nil {
 		update["management_fee_per_person"] = *req.ManagementFeePerPerson
-	}
-	if req.Status != "" {
-		update["status"] = req.Status
 	}
 	if req.Note != nil {
 		update["note"] = *req.Note
@@ -252,6 +246,44 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 	defer cancel()
 
 	roomsCol := config.GetCollection("rooms")
+
+	// occupants và status KHÔNG cho sửa tay tùy ý nếu sẽ làm lệch khỏi
+	// tenant_ids thực tế của phòng: 2 field này vốn được addTenantToRoom/
+	// removeTenantFromRoom tự đồng bộ theo đúng số người đang ở. Sửa tay sai
+	// (vd: set status=available trong khi phòng vẫn còn tenant_ids) sẽ khiến
+	// DeleteRoom hoặc các luồng khác đọc nhầm trạng thái phòng.
+	// -> Chỉ cho phép sửa occupants/status khi giá trị mới khớp với thực tế
+	// (dùng để backfill dữ liệu cũ), còn muốn đổi người ở/trạng thái thật sự
+	// thì phải qua đúng luồng (POST /api/contracts, /api/users/:id/room, ...).
+	if req.Occupants != nil || req.Status != "" {
+		var current models.Room
+		if err := roomsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&current); err != nil {
+			if err == mongo.ErrNoDocuments {
+				utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
+				return
+			}
+			utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+			return
+		}
+
+		if req.Occupants != nil {
+			if *req.Occupants != len(current.TenantIDs) {
+				utils.Error(c, http.StatusConflict, "occupants phải khớp với số người thực tế đang ở phòng (tenant_ids); hãy dùng POST /api/contracts hoặc /api/users/:id/room để thêm/bớt người")
+				return
+			}
+			update["occupants"] = *req.Occupants
+		}
+
+		if req.Status != "" {
+			wantOccupied := req.Status == models.RoomStatusOccupied
+			actuallyOccupied := len(current.TenantIDs) > 0
+			if wantOccupied != actuallyOccupied {
+				utils.Error(c, http.StatusConflict, "status không khớp với số người thực tế đang ở phòng; hãy dùng đúng luồng check-in/checkout thay vì sửa status trực tiếp")
+				return
+			}
+			update["status"] = req.Status
+		}
+	}
 
 	// Nếu manager giảm capacity, phải chặn nếu số tenant hiện tại đã vượt quá
 	// giá trị mới (tránh phòng bị "quá tải" ngay sau khi update).
@@ -312,7 +344,9 @@ func (h *RoomHandler) DeleteRoom(c *gin.Context) {
 		utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
 		return
 	}
-	if room.Status == models.RoomStatusOccupied {
+	// Kiểm tra trực tiếp tenant_ids (nguồn sự thật thực tế) thay vì chỉ dựa vào
+	// field status - phòng ngừa trường hợp status bị lệch khỏi thực tế.
+	if len(room.TenantIDs) > 0 || room.Status == models.RoomStatusOccupied {
 		utils.Error(c, http.StatusConflict, "Không thể xóa phòng đang có người thuê")
 		return
 	}

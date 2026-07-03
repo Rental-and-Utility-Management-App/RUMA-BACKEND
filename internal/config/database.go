@@ -66,6 +66,21 @@ func ensureIndexes(ctx context.Context) {
 		log.Println("Cảnh báo tạo index invoices.payment_ref_code:", err)
 	}
 
+	// Unique partial index: chặn ở tầng DB việc tạo trùng hóa đơn cho cùng 1
+	// phòng trong cùng 1 tháng/năm (không chỉ dựa vào check-then-insert ở tầng
+	// handler, vốn có thể bị race-condition nếu 2 request tạo hóa đơn cùng lúc).
+	// Hóa đơn đã "cancelled" bị loại khỏi ràng buộc này (partial filter), khớp
+	// đúng logic ở CreateInvoice: hóa đơn hủy không tính là trùng.
+	_, err = invoicesCol.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: map[string]interface{}{"room_id": 1, "year": 1, "month": 1},
+		Options: options.Index().
+			SetUnique(true).
+			SetPartialFilterExpression(bson.M{"status": bson.M{"$ne": "cancelled"}}),
+	})
+	if err != nil {
+		log.Println("Cảnh báo tạo index invoices.room_id+year+month (partial not-cancelled):", err)
+	}
+
 	paymentsCol := DB.Collection("payments")
 	_, err = paymentsCol.Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys:    map[string]interface{}{"external_transaction_id": 1},

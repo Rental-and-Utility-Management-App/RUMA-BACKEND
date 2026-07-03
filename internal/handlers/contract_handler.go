@@ -209,27 +209,54 @@ func (h *ContractHandler) CreateContract(c *gin.Context) {
 		UpdatedAt:       now,
 	}
 
+	// Thứ tự quan trọng để tránh race condition: insert contract TRƯỚC (được
+	// bảo vệ bởi unique partial index room_id+status=active ở tầng DB - xem
+	// config/database.go). Nếu 2 request tạo hợp đồng cho cùng 1 phòng chạy
+	// gần như đồng thời, cả 2 đều có thể pass qua activeCount check ở trên,
+	// nhưng insert sẽ chỉ có đúng 1 request thành công (request thua bị DB
+	// từ chối do trùng unique index) - trước khi bất kỳ dữ liệu room/user nào
+	// bị mutate, tránh để lại trạng thái "gán tenant vào phòng nhưng không có
+	// hợp đồng nào đứng sau" như cách làm cũ.
+	if _, err := contractsCol.InsertOne(ctx, contract); err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			utils.Error(c, http.StatusConflict, "Phòng vừa được tạo hợp đồng active bởi request khác, vui lòng thử lại")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Không thể tạo hợp đồng")
+		return
+	}
+
 	// Gán từng tenant vào phòng (idempotent, tự check capacity lần nữa để an toàn).
+	// Nếu 1 bước gán thất bại giữa chừng, rollback: gỡ các tenant đã lỡ gán +
+	// xóa contract vừa tạo, để không để lại trạng thái nửa vời.
+	assigned := make([]primitive.ObjectID, 0, len(tenantIDs))
+	rollback := func() {
+		for _, tid := range assigned {
+			_, _ = removeTenantFromRoom(ctx, roomsCol, roomID, tid)
+			_, _ = usersCol.UpdateOne(ctx, bson.M{"_id": tid}, bson.M{"$unset": bson.M{"room_id": ""}})
+		}
+		_, _ = contractsCol.DeleteOne(ctx, bson.M{"_id": contract.ID})
+	}
+
 	for _, tid := range tenantIDs {
 		if _, err := addTenantToRoom(ctx, roomsCol, roomID, tid); err != nil {
+			rollback()
 			if err == ErrRoomFull {
 				utils.Error(c, http.StatusConflict, "Phòng đã đủ số người tối đa (capacity)")
 				return
 			}
-			utils.Error(c, http.StatusInternalServerError, "Không thể gán người thuê vào phòng")
+			utils.Error(c, http.StatusInternalServerError, "Không thể gán người thuê vào phòng, đã hủy hợp đồng vừa tạo")
 			return
 		}
 		if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": tid}, bson.M{
 			"$set": bson.M{"room_id": roomID, "updated_at": now},
 		}); err != nil {
-			utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật tài khoản người thuê")
+			assigned = append(assigned, tid) // đã addTenantToRoom thành công, cần gỡ khi rollback
+			rollback()
+			utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật tài khoản người thuê, đã hủy hợp đồng vừa tạo")
 			return
 		}
-	}
-
-	if _, err := contractsCol.InsertOne(ctx, contract); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Không thể tạo hợp đồng (đã gán phòng cho tenant, cần kiểm tra lại thủ công nếu lỗi lặp lại)")
-		return
+		assigned = append(assigned, tid)
 	}
 
 	utils.Success(c, http.StatusCreated, "Tạo hợp đồng thành công", contract)
@@ -574,6 +601,15 @@ func (h *ContractHandler) CollectDeposit(c *gin.Context) {
 	}
 	if contract.Status != models.ContractStatusActive {
 		utils.Error(c, http.StatusConflict, "Hợp đồng không còn hiệu lực")
+		return
+	}
+
+	// Chặn thu cọc vượt quá deposit_amount đã thỏa thuận trong hợp đồng, nhất
+	// quán với cách CreatePayment chặn thanh toán vượt quá số tiền còn lại của
+	// hóa đơn. Nếu thực sự cần thu thêm cọc (đổi thỏa thuận), manager phải sửa
+	// deposit_amount trước (chỉ sửa được khi chưa thu đồng nào - xem UpdateContract).
+	if contract.DepositPaid+req.Amount > contract.DepositAmount {
+		utils.Error(c, http.StatusBadRequest, "Số tiền thu vượt quá deposit_amount đã thỏa thuận trong hợp đồng")
 		return
 	}
 
