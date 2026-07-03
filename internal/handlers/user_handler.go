@@ -98,9 +98,7 @@ func (h *UserHandler) CreateTenant(c *gin.Context) {
 			return
 		}
 
-		// Không cho gán trực tiếp vào phòng đang gắn hợp đồng active: hợp đồng đó
-		// không có tenant mới này trong tenant_ids -> gán "tắt" sẽ làm room.tenant_ids
-		// lệch khỏi contract.tenant_ids. Phải thêm người thông qua /api/contracts.
+		// Không cho gán trực tiếp vào phòng đang gắn hợp đồng active
 		contractsCol := config.GetCollection("contracts")
 		hasActive, err := hasActiveContractForRoom(ctx, contractsCol, roomID)
 		if err != nil {
@@ -120,8 +118,6 @@ func (h *UserHandler) CreateTenant(c *gin.Context) {
 		return
 	}
 
-	// Nếu có gán phòng, cập nhật phòng đó -> occupied + thêm vào tenant_ids
-	// (dùng $addToSet để không bao giờ bị trùng phần tử trong mảng).
 	if user.RoomID != nil {
 		roomsCol := config.GetCollection("rooms")
 		if _, err := addTenantToRoom(ctx, roomsCol, *user.RoomID, user.ID); err != nil {
@@ -168,9 +164,38 @@ func (h *UserHandler) ListTenants(c *gin.Context) {
 		return
 	}
 
+	// Lấy danh sách RoomID
+	var roomIDs []primitive.ObjectID
+	for _, u := range users {
+		if u.RoomID != nil {
+			roomIDs = append(roomIDs, *u.RoomID)
+		}
+	}
+
+	// Truy vấn tất cả phòng liên quan
+	roomMap := make(map[primitive.ObjectID]models.Room)
+	if len(roomIDs) > 0 {
+		roomsCol := config.GetCollection("rooms")
+		roomCursor, err := roomsCol.Find(ctx, bson.M{"_id": bson.M{"$in": roomIDs}})
+		if err == nil {
+			var rooms []models.Room
+			if err := roomCursor.All(ctx, &rooms); err == nil {
+				for _, r := range rooms {
+					roomMap[r.ID] = r
+				}
+			}
+		}
+	}
+
 	responses := make([]models.UserResponse, 0, len(users))
 	for _, u := range users {
-		responses = append(responses, u.ToResponse())
+		res := u.ToResponse()
+		if u.RoomID != nil {
+			if r, ok := roomMap[*u.RoomID]; ok {
+				res.Room = &r
+			}
+		}
+		responses = append(responses, res)
 	}
 
 	utils.Success(c, http.StatusOK, "Lấy danh sách thành công", responses)
@@ -207,7 +232,18 @@ func (h *UserHandler) GetTenant(c *gin.Context) {
 		return
 	}
 
-	utils.Success(c, http.StatusOK, "OK", user.ToResponse())
+	res := user.ToResponse()
+
+	// Truy vấn phòng nếu user có RoomID
+	if user.RoomID != nil {
+		roomsCol := config.GetCollection("rooms")
+		var room models.Room
+		if err := roomsCol.FindOne(ctx, bson.M{"_id": *user.RoomID}).Decode(&room); err == nil {
+			res.Room = &room
+		}
+	}
+
+	utils.Success(c, http.StatusOK, "OK", res)
 }
 
 type updateTenantRequest struct {
@@ -253,10 +289,6 @@ func (h *UserHandler) UpdateTenant(c *gin.Context) {
 
 	usersCol := config.GetCollection("users")
 
-	// Không cho khóa đăng nhập (is_active=false) một tenant đang đứng tên hợp
-	// đồng active - tenant đó vẫn đang thực sự ở trọ và cần đăng nhập để xem
-	// hóa đơn/thanh toán của mình. Phải checkout/cancel hợp đồng (tenant thật
-	// sự rời đi) trước khi khóa tài khoản.
 	if req.IsActive != nil && !*req.IsActive {
 		contractsCol := config.GetCollection("contracts")
 		hasActive, err := hasActiveContractForTenant(ctx, contractsCol, id)
@@ -292,10 +324,6 @@ type assignRoomRequest struct {
 
 // AssignRoom godoc
 // @Summary Gán/đổi phòng cho người thuê có sẵn
-// @Description Manager gán 1 tenant đã tồn tại vào 1 phòng, hoặc đổi tenant đó
-// @Description sang phòng khác nếu đang ở phòng cũ. 1 phòng có thể chứa nhiều
-// @Description tenant (ở ghép). Có validate để tránh gán trùng (tenant đã ở
-// @Description đúng phòng đó rồi thì báo lỗi thay vì gán lại vô nghĩa).
 // @Tags Users
 // @Accept json
 // @Produce json
@@ -340,16 +368,11 @@ func (h *UserHandler) AssignRoom(c *gin.Context) {
 		return
 	}
 
-	// Validate tránh gán trùng: tenant đã ở đúng phòng này rồi.
 	if tenant.RoomID != nil && *tenant.RoomID == newRoomID {
 		utils.Error(c, http.StatusConflict, "Người thuê đã ở phòng này rồi")
 		return
 	}
 
-	// Không cho đổi phòng "tắt" nếu tenant đang đứng tên trong 1 hợp đồng active -
-	// đổi thẳng sẽ làm hợp đồng đó lệch khỏi thực tế (tenant đã rời phòng cũ
-	// nhưng hợp đồng vẫn active với room_id cũ). Phải checkout/cancel hợp đồng
-	// đó trước.
 	tenantHasActive, err := hasActiveContractForTenant(ctx, contractsCol, tenantID)
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
@@ -360,7 +383,6 @@ func (h *UserHandler) AssignRoom(c *gin.Context) {
 		return
 	}
 
-	// Phòng đích phải tồn tại trước khi thao tác gì (báo lỗi sớm, không đụng tới phòng cũ).
 	count, err := roomsCol.CountDocuments(ctx, bson.M{"_id": newRoomID})
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
@@ -371,9 +393,6 @@ func (h *UserHandler) AssignRoom(c *gin.Context) {
 		return
 	}
 
-	// Không cho gán vào phòng đích đang gắn hợp đồng active của (những) tenant
-	// khác - hợp đồng đó không có tenant này trong tenant_ids nên gán "tắt" sẽ
-	// làm room.tenant_ids lệch khỏi contract.tenant_ids.
 	roomHasActive, err := hasActiveContractForRoom(ctx, contractsCol, newRoomID)
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
@@ -384,7 +403,6 @@ func (h *UserHandler) AssignRoom(c *gin.Context) {
 		return
 	}
 
-	// Nếu đang ở phòng khác -> đây là thao tác ĐỔI phòng: gỡ khỏi phòng cũ trước.
 	if tenant.RoomID != nil {
 		if _, err := removeTenantFromRoom(ctx, roomsCol, *tenant.RoomID, tenantID); err != nil && err != mongo.ErrNoDocuments {
 			utils.Error(c, http.StatusInternalServerError, "Không thể gỡ người thuê khỏi phòng cũ")
@@ -418,9 +436,6 @@ func (h *UserHandler) AssignRoom(c *gin.Context) {
 
 // UnassignRoom godoc
 // @Summary Trả phòng cho 1 người thuê cụ thể
-// @Description Manager gỡ 1 tenant khỏi phòng hiện tại (những tenant khác ở
-// @Description ghép cùng phòng, nếu có, không bị ảnh hưởng). Phòng tự chuyển
-// @Description về "available" khi không còn tenant nào.
 // @Tags Users
 // @Accept json
 // @Produce json
@@ -456,9 +471,6 @@ func (h *UserHandler) UnassignRoom(c *gin.Context) {
 		return
 	}
 
-	// Không cho trả phòng "tắt" nếu tenant đang đứng tên trong 1 hợp đồng active -
-	// sẽ làm hợp đồng bị "mồ côi" (vẫn active nhưng tenant đã rời phòng). Phải
-	// checkout/cancel hợp đồng đó trước để giữ đồng bộ dữ liệu và xử lý cọc đúng quy trình.
 	contractsCol := config.GetCollection("contracts")
 	hasActive, err := hasActiveContractForTenant(ctx, contractsCol, tenantID)
 	if err != nil {
@@ -472,9 +484,7 @@ func (h *UserHandler) UnassignRoom(c *gin.Context) {
 
 	oldRoomID := *tenant.RoomID
 	if _, err := removeTenantFromRoom(ctx, roomsCol, oldRoomID, tenantID); err != nil {
-		if err == mongo.ErrNoDocuments {
-			// Phòng cũ không còn tồn tại -> vẫn tiếp tục gỡ room_id khỏi tenant bên dưới.
-		} else {
+		if err != mongo.ErrNoDocuments {
 			utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật phòng")
 			return
 		}

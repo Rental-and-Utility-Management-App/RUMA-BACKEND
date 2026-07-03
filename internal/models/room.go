@@ -38,6 +38,8 @@ type Room struct {
 	// gán/đổi/trả phòng để tránh trùng lặp phần tử.
 	TenantIDs []primitive.ObjectID `bson:"tenant_ids,omitempty" json:"tenant_ids,omitempty"`
 
+	Tenants []UserResponse `bson:"-" json:"tenants,omitempty"`
+
 	// Capacity: so nguoi toi da duoc phep o phong nay. 0 = khong gioi han
 	// (chi nen dung cho du lieu cu truoc khi co field nay; phong tao moi
 	// bat buoc phai khai bao capacity > 0). Dung de chan gan/doi phong

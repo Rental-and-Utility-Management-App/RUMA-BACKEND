@@ -22,11 +22,9 @@ func NewRoomHandler() *RoomHandler {
 }
 
 type createRoomRequest struct {
-	Code  string `json:"code" binding:"required"`
-	Name  string `json:"name"`
-	Floor int    `json:"floor"`
-	// Capacity: số người tối đa được phép ở phòng, bắt buộc phải khai báo khi tạo
-	// phòng mới để hệ thống có thể chặn gán quá tải ngay từ đầu.
+	Code                   string  `json:"code" binding:"required"`
+	Name                   string  `json:"name"`
+	Floor                  int     `json:"floor"`
 	Capacity               int     `json:"capacity" binding:"required,min=1"`
 	MonthlyRent            float64 `json:"monthly_rent" binding:"required"`
 	ElectricPrice          float64 `json:"price_electricity" binding:"required"`
@@ -38,7 +36,6 @@ type createRoomRequest struct {
 
 // CreateRoom godoc
 // @Summary Tạo phòng mới
-// @Description Manager tạo phòng mới. Cần quyền Manager.
 // @Tags Rooms
 // @Accept json
 // @Produce json
@@ -95,7 +92,6 @@ func (h *RoomHandler) CreateRoom(c *gin.Context) {
 
 // ListRooms godoc
 // @Summary Lấy danh sách phòng
-// @Description Manager xem tất cả phòng, Tenant chỉ xem phòng của mình.
 // @Tags Rooms
 // @Accept json
 // @Produce json
@@ -117,7 +113,7 @@ func (h *RoomHandler) ListRooms(c *gin.Context) {
 			utils.Error(c, http.StatusBadRequest, "User ID không hợp lệ")
 			return
 		}
-		filter["tenant_ids"] = userID // Mongo tự khớp nếu userID nằm trong mảng tenant_ids
+		filter["tenant_ids"] = userID
 	}
 
 	cursor, err := roomsCol.Find(ctx, filter)
@@ -127,7 +123,6 @@ func (h *RoomHandler) ListRooms(c *gin.Context) {
 	}
 	defer cursor.Close(ctx)
 
-	// Fix: Khởi tạo mảng rỗng để frontend không bị lỗi null
 	rooms := make([]models.Room, 0)
 	if err := cursor.All(ctx, &rooms); err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Lỗi đọc dữ liệu")
@@ -139,7 +134,6 @@ func (h *RoomHandler) ListRooms(c *gin.Context) {
 
 // GetRoom godoc
 // @Summary Xem chi tiết một phòng
-// @Description Lấy thông tin chi tiết phòng theo ID.
 // @Tags Rooms
 // @Accept json
 // @Produce json
@@ -178,10 +172,23 @@ func (h *RoomHandler) GetRoom(c *gin.Context) {
 		}
 	}
 
+	// Truy vấn danh sách Tenant đang ở trong phòng
+	if len(room.TenantIDs) > 0 {
+		usersCol := config.GetCollection("users")
+		cursor, err := usersCol.Find(ctx, bson.M{"_id": bson.M{"$in": room.TenantIDs}})
+		if err == nil {
+			var tenants []models.User
+			if err := cursor.All(ctx, &tenants); err == nil {
+				for _, t := range tenants {
+					room.Tenants = append(room.Tenants, t.ToResponse())
+				}
+			}
+		}
+	}
+
 	utils.Success(c, http.StatusOK, "OK", room)
 }
 
-// Sửa Note thành con trỏ *string để có thể xóa trắng ghi chú
 type updateRoomRequest struct {
 	Name                   string            `json:"name"`
 	Floor                  *int              `json:"floor"`
@@ -197,7 +204,6 @@ type updateRoomRequest struct {
 
 // UpdateRoom godoc
 // @Summary Cập nhật thông tin phòng
-// @Description Manager cập nhật thông tin phòng.
 // @Tags Rooms
 // @Accept json
 // @Produce json
@@ -247,14 +253,6 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 
 	roomsCol := config.GetCollection("rooms")
 
-	// occupants và status KHÔNG cho sửa tay tùy ý nếu sẽ làm lệch khỏi
-	// tenant_ids thực tế của phòng: 2 field này vốn được addTenantToRoom/
-	// removeTenantFromRoom tự đồng bộ theo đúng số người đang ở. Sửa tay sai
-	// (vd: set status=available trong khi phòng vẫn còn tenant_ids) sẽ khiến
-	// DeleteRoom hoặc các luồng khác đọc nhầm trạng thái phòng.
-	// -> Chỉ cho phép sửa occupants/status khi giá trị mới khớp với thực tế
-	// (dùng để backfill dữ liệu cũ), còn muốn đổi người ở/trạng thái thật sự
-	// thì phải qua đúng luồng (POST /api/contracts, /api/users/:id/room, ...).
 	if req.Occupants != nil || req.Status != "" {
 		var current models.Room
 		if err := roomsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&current); err != nil {
@@ -285,8 +283,6 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 		}
 	}
 
-	// Nếu manager giảm capacity, phải chặn nếu số tenant hiện tại đã vượt quá
-	// giá trị mới (tránh phòng bị "quá tải" ngay sau khi update).
 	if req.Capacity != nil {
 		var current models.Room
 		if err := roomsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&current); err != nil {
@@ -319,7 +315,6 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 
 // DeleteRoom godoc
 // @Summary Xóa phòng
-// @Description Manager xóa phòng (Không thể xóa phòng đang có người ở).
 // @Tags Rooms
 // @Accept json
 // @Produce json
@@ -344,16 +339,12 @@ func (h *RoomHandler) DeleteRoom(c *gin.Context) {
 		utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
 		return
 	}
-	// Kiểm tra trực tiếp tenant_ids (nguồn sự thật thực tế) thay vì chỉ dựa vào
-	// field status - phòng ngừa trường hợp status bị lệch khỏi thực tế.
+
 	if len(room.TenantIDs) > 0 || room.Status == models.RoomStatusOccupied {
 		utils.Error(c, http.StatusConflict, "Không thể xóa phòng đang có người thuê")
 		return
 	}
 
-	// Chặn xóa nếu phòng đã từng có hóa đơn: xóa cứng sẽ làm invoice/payment cũ
-	// mồ côi (room_id trỏ tới phòng không còn tồn tại), gây khó tra cứu lịch sử.
-	// Manager nên dùng cách khác (đổi status, đổi note) để "ẩn" phòng không dùng nữa.
 	invoicesCol := config.GetCollection("invoices")
 	invoiceCount, err := invoicesCol.CountDocuments(ctx, bson.M{"room_id": id})
 	if err != nil {
@@ -365,9 +356,6 @@ func (h *RoomHandler) DeleteRoom(c *gin.Context) {
 		return
 	}
 
-	// Tương tự: chặn xóa nếu phòng đã từng gắn với hợp đồng nào (kể cả đã đóng) -
-	// xóa cứng sẽ làm contracts/deposit_transactions cũ mồ côi (room_id trỏ tới
-	// phòng không còn tồn tại), mất dấu lịch sử thu/hoàn cọc.
 	contractsCol := config.GetCollection("contracts")
 	contractCount, err := contractsCol.CountDocuments(ctx, bson.M{"room_id": id})
 	if err != nil {
@@ -389,9 +377,6 @@ func (h *RoomHandler) DeleteRoom(c *gin.Context) {
 
 // CheckoutRoom godoc
 // @Summary Trả phòng
-// @Description Manager xác nhận người thuê trả phòng: phòng chuyển về trạng thái trống (available),
-// @Description gỡ liên kết tenant khỏi phòng và gỡ phòng khỏi tài khoản tenant.
-// @Description Hóa đơn/thanh toán cũ của tenant vẫn được giữ nguyên để tra cứu lịch sử.
 // @Tags Rooms
 // @Accept json
 // @Produce json
@@ -426,11 +411,6 @@ func (h *RoomHandler) CheckoutRoom(c *gin.Context) {
 		return
 	}
 
-	// Nếu phòng đang gắn với 1 hợp đồng active, KHÔNG cho trả phòng qua lối tắt
-	// này (sẽ làm hợp đồng bị "mồ côi": vẫn active nhưng phòng đã trống, đồng
-	// thời chặn tạo hợp đồng mới cho phòng do ràng buộc unique room_id+active).
-	// Bắt buộc phải checkout đúng quy trình qua /api/contracts/:id/checkout
-	// (hoặc /cancel nếu chưa thu cọc) để đóng hợp đồng và xử lý cọc trước.
 	contractsCol := config.GetCollection("contracts")
 	hasActive, err := hasActiveContractForRoom(ctx, contractsCol, id)
 	if err != nil {
@@ -442,9 +422,6 @@ func (h *RoomHandler) CheckoutRoom(c *gin.Context) {
 		return
 	}
 
-	// Trả TOÀN BỘ phòng: gỡ hết tenant đang ở (phòng có thể có nhiều người).
-	// Nếu chỉ muốn trả phòng cho 1 tenant cụ thể (còn người khác ở lại),
-	// dùng DELETE /api/users/:id/room thay vì endpoint này.
 	tenantIDs := room.TenantIDs
 
 	_, err = roomsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{

@@ -47,6 +47,7 @@ type UserResponse struct {
 	Role     Role                `json:"role"`
 	RoomID   *primitive.ObjectID `json:"room_id,omitempty"`
 	IsActive bool                `json:"is_active"`
+	Room     *Room               `json:"room,omitempty"`
 }
 
 func (u *User) ToResponse() UserResponse {
