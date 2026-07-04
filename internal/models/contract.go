@@ -80,6 +80,15 @@ type RenewalRecord struct {
 	CreatedAt      time.Time          `bson:"created_at" json:"created_at"`
 }
 
+// TenantBrief: thông tin rút gọn của 1 tenant, dùng để hiển thị tên trong
+// danh sách/chi tiết hợp đồng mà không cần FE gọi thêm API riêng để tra tên
+// theo từng ID trong tenant_ids.
+type TenantBrief struct {
+	ID       primitive.ObjectID `json:"id"`
+	FullName string             `json:"full_name"`
+	Phone    string             `json:"phone"`
+}
+
 // Contract = hợp đồng thuê phòng của 1 nhóm tenant, gắn với 1 phòng, có cọc
 // và thời hạn thuê. 1 phòng tại 1 thời điểm chỉ có tối đa 1 hợp đồng active
 // (được đảm bảo ở tầng handler khi tạo mới).
@@ -92,6 +101,12 @@ type Contract struct {
 
 	// TenantIDs: toàn bộ tenant đứng tên trong hợp đồng (hỗ trợ ở ghép).
 	TenantIDs []primitive.ObjectID `bson:"tenant_ids" json:"tenant_ids"`
+
+	// Tenants: thông tin rút gọn (tên, sđt) của từng phần tử trong TenantIDs.
+	// KHÔNG lưu vào DB (bson:"-") — chỉ được populate ở tầng handler (xem
+	// populateContractTenants trong handlers/contract.go) trước khi trả response,
+	// để FE hiển thị tên thay vì phải tự tra ID.
+	Tenants []TenantBrief `bson:"-" json:"tenants,omitempty"`
 
 	// MonthlyRent: giá thuê snapshot tại thời điểm ký/gia hạn gần nhất.
 	// Tách khỏi Room.MonthlyRent vì giá phòng niêm yết có thể đổi theo thời

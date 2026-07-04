@@ -64,6 +64,64 @@ func resolveDepositStatusAfterCollect(depositAmount, depositPaid float64) models
 	}
 }
 
+// populateContractTenants gộp toàn bộ tenant_ids từ danh sách hợp đồng, query
+// 1 lần duy nhất sang users collection, rồi gán ngược lại Tenants cho từng
+// contract (tránh N+1 query khi list nhiều hợp đồng). Nhận slice con trỏ để
+// sửa trực tiếp trên các struct gốc, dùng chung được cho cả ListContracts
+// (nhiều hợp đồng) lẫn GetContract (1 hợp đồng, truyền []*models.Contract{&contract}).
+//
+// Lỗi ở đây không nên chặn cả response chính (tenant_ids vẫn còn để FE
+// fallback hiển thị), nên các handler gọi hàm này chỉ log/bỏ qua lỗi thay vì
+// trả StatusInternalServerError.
+func populateContractTenants(ctx context.Context, contracts []*models.Contract) error {
+	idSet := map[primitive.ObjectID]bool{}
+	for _, ct := range contracts {
+		for _, tid := range ct.TenantIDs {
+			idSet[tid] = true
+		}
+	}
+	if len(idSet) == 0 {
+		return nil
+	}
+
+	ids := make([]primitive.ObjectID, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+
+	usersCol := config.GetCollection("users")
+	cursor, err := usersCol.Find(ctx, bson.M{"_id": bson.M{"$in": ids}})
+	if err != nil {
+		return err
+	}
+	defer cursor.Close(ctx)
+
+	var users []models.User
+	if err := cursor.All(ctx, &users); err != nil {
+		return err
+	}
+
+	userMap := make(map[primitive.ObjectID]models.User, len(users))
+	for _, u := range users {
+		userMap[u.ID] = u
+	}
+
+	for _, ct := range contracts {
+		tenants := make([]models.TenantBrief, 0, len(ct.TenantIDs))
+		for _, tid := range ct.TenantIDs {
+			if u, ok := userMap[tid]; ok {
+				tenants = append(tenants, models.TenantBrief{
+					ID:       u.ID,
+					FullName: u.FullName,
+					Phone:    u.Phone,
+				})
+			}
+		}
+		ct.Tenants = tenants
+	}
+	return nil
+}
+
 // ===================== Create =====================
 
 type createContractRequest struct {
@@ -259,6 +317,8 @@ func (h *ContractHandler) CreateContract(c *gin.Context) {
 		assigned = append(assigned, tid)
 	}
 
+	_ = populateContractTenants(ctx, []*models.Contract{&contract})
+
 	utils.Success(c, http.StatusCreated, "Tạo hợp đồng thành công", contract)
 }
 
@@ -333,6 +393,15 @@ func (h *ContractHandler) ListContracts(c *gin.Context) {
 		return
 	}
 
+	// Populate tên tenant cho toàn bộ danh sách trong 1 lần query users.
+	// Build slice con trỏ trỏ vào từng phần tử thật trong `contracts` để
+	// populateContractTenants sửa trực tiếp, không cần gán lại thủ công.
+	ptrs := make([]*models.Contract, len(contracts))
+	for i := range contracts {
+		ptrs[i] = &contracts[i]
+	}
+	_ = populateContractTenants(ctx, ptrs) // lỗi populate không chặn response chính
+
 	utils.Success(c, http.StatusOK, "Lấy danh sách hợp đồng thành công", contracts)
 }
 
@@ -370,6 +439,8 @@ func (h *ContractHandler) GetContract(c *gin.Context) {
 		utils.Error(c, http.StatusForbidden, "Bạn không có quyền xem hợp đồng này")
 		return
 	}
+
+	_ = populateContractTenants(ctx, []*models.Contract{&contract})
 
 	utils.Success(c, http.StatusOK, "OK", contract)
 }
