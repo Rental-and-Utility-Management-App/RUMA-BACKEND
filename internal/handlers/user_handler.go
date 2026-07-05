@@ -478,7 +478,7 @@ func (h *UserHandler) UnassignRoom(c *gin.Context) {
 		return
 	}
 	if hasActive {
-		utils.Error(c, http.StatusConflict, "Người thuê đang đứng tên trong 1 hợp đồng hiệu lực; hãy dùng POST /api/contracts/{id}/checkout (hoặc /cancel nếu chưa thu cọc) để trả phòng đúng quy trình")
+		utils.Error(c, http.StatusConflict, "Người thuê này hiện đang đứng tên trên một hợp đồng còn hiệu lực, nên không thể xóa/thao tác trực tiếp được. Bạn cần thực hiện thủ tục trả phòng cho hợp đồng đó trước — nếu đã thu tiền cọc thì dùng chức năng \"Trả phòng\" (checkout), còn nếu chưa thu cọc thì dùng chức năng \"Hủy hợp đồng\" (cancel).")
 		return
 	}
 
