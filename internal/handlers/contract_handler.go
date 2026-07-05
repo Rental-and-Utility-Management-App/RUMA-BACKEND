@@ -792,7 +792,7 @@ func (h *ContractHandler) CheckoutContract(c *gin.Context) {
 	}
 
 	if req.RefundMethod != "" && !req.RefundMethod.IsValid() {
-		utils.Error(c, http.StatusBadRequest, "refund_method không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Phương thức hoàn cọc không hợp lệ")
 		return
 	}
 
@@ -820,11 +820,11 @@ func (h *ContractHandler) CheckoutContract(c *gin.Context) {
 
 	remainingHeld := contract.DepositPaid - contract.DepositRefunded
 	if req.RefundAmount > remainingHeld {
-		utils.Error(c, http.StatusBadRequest, "refund_amount vượt quá số cọc còn đang giữ")
+		utils.Error(c, http.StatusBadRequest, "Số tiền hoàn cọc không được vượt quá số tiền cọc hiện đang giữ")
 		return
 	}
 	if req.RefundAmount < remainingHeld && req.DeductionNote == "" {
-		utils.Error(c, http.StatusBadRequest, "Cần nhập deduction_note khi hoàn cọc ít hơn số đang giữ")
+		utils.Error(c, http.StatusBadRequest, "Vui lòng nhập lý do khi hoàn cọc ít hơn số tiền đang giữ")
 		return
 	}
 
@@ -963,11 +963,11 @@ func (h *ContractHandler) CancelContract(c *gin.Context) {
 		return
 	}
 	if contract.Status != models.ContractStatusActive {
-		utils.Error(c, http.StatusConflict, "Chỉ có thể hủy hợp đồng đang active")
+		utils.Error(c, http.StatusConflict, "Chỉ có thể hủy hợp đồng đang hiệu lực")
 		return
 	}
 	if contract.DepositPaid > 0 {
-		utils.Error(c, http.StatusConflict, "Đã thu cọc, không thể hủy trực tiếp; hãy dùng /checkout để hoàn/giữ cọc")
+		utils.Error(c, http.StatusConflict, "Đã thu cọc, không thể hủy trực tiếp; hãy dùng Checkout để hoàn/giữ cọc")
 		return
 	}
 
@@ -985,7 +985,7 @@ func (h *ContractHandler) CancelContract(c *gin.Context) {
 
 	for _, tid := range contract.TenantIDs {
 		if _, err := removeTenantFromRoom(ctx, roomsCol, contract.RoomID, tid); err != nil && err != mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusInternalServerError, "Đã hủy hợp đồng nhưng gỡ tenant khỏi phòng thất bại, cần kiểm tra lại thủ công")
+			utils.Error(c, http.StatusInternalServerError, "Đã hủy hợp đồng nhưng gỡ người thuê khỏi phòng thất bại, cần kiểm tra lại thủ công")
 			return
 		}
 		if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": tid}, bson.M{
