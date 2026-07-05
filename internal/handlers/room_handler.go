@@ -46,7 +46,7 @@ type createRoomRequest struct {
 func (h *RoomHandler) CreateRoom(c *gin.Context) {
 	var req createRoomRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Thông tin bạn nhập chưa hợp lệ, vui lòng kiểm tra lại")
 		return
 	}
 
@@ -57,11 +57,11 @@ func (h *RoomHandler) CreateRoom(c *gin.Context) {
 
 	count, err := roomsCol.CountDocuments(ctx, bson.M{"code": req.Code})
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if count > 0 {
-		utils.Error(c, http.StatusConflict, "Mã phòng đã tồn tại")
+		utils.Error(c, http.StatusConflict, "Mã phòng này đã được sử dụng, vui lòng chọn mã khác")
 		return
 	}
 
@@ -83,7 +83,7 @@ func (h *RoomHandler) CreateRoom(c *gin.Context) {
 	}
 
 	if _, err := roomsCol.InsertOne(ctx, room); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Không thể tạo phòng")
+		utils.Error(c, http.StatusInternalServerError, "Không thể tạo phòng mới, vui lòng thử lại")
 		return
 	}
 
@@ -110,7 +110,7 @@ func (h *RoomHandler) ListRooms(c *gin.Context) {
 		userIDStr := c.GetString("user_id")
 		userID, err := primitive.ObjectIDFromHex(userIDStr)
 		if err != nil {
-			utils.Error(c, http.StatusBadRequest, "User ID không hợp lệ")
+			utils.Error(c, http.StatusBadRequest, "Không xác định được tài khoản của bạn, vui lòng đăng nhập lại")
 			return
 		}
 		filter["tenant_ids"] = userID
@@ -118,14 +118,14 @@ func (h *RoomHandler) ListRooms(c *gin.Context) {
 
 	cursor, err := roomsCol.Find(ctx, filter)
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	defer cursor.Close(ctx)
 
 	rooms := make([]models.Room, 0)
 	if err := cursor.All(ctx, &rooms); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi đọc dữ liệu")
+		utils.Error(c, http.StatusInternalServerError, "Không thể tải danh sách phòng, vui lòng thử lại")
 		return
 	}
 
@@ -144,7 +144,7 @@ func (h *RoomHandler) ListRooms(c *gin.Context) {
 func (h *RoomHandler) GetRoom(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Không tìm thấy phòng này")
 		return
 	}
 
@@ -158,7 +158,7 @@ func (h *RoomHandler) GetRoom(c *gin.Context) {
 			utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 
@@ -215,13 +215,13 @@ type updateRoomRequest struct {
 func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Không tìm thấy phòng này")
 		return
 	}
 
 	var req updateRoomRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Thông tin bạn nhập chưa hợp lệ, vui lòng kiểm tra lại")
 		return
 	}
 
@@ -260,13 +260,13 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 				utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
 				return
 			}
-			utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+			utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 			return
 		}
 
 		if req.Occupants != nil {
 			if *req.Occupants != len(current.TenantIDs) {
-				utils.Error(c, http.StatusConflict, "occupants phải khớp với số người thực tế đang ở phòng (tenant_ids); hãy dùng POST /api/contracts hoặc /api/users/:id/room để thêm/bớt người")
+				utils.Error(c, http.StatusConflict, "Số người ở không khớp với số người đang thực tế thuê phòng. Vui lòng thêm hoặc bớt người thuê thông qua chức năng quản lý hợp đồng/người thuê thay vì sửa số liệu này trực tiếp")
 				return
 			}
 			update["occupants"] = *req.Occupants
@@ -276,7 +276,7 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 			wantOccupied := req.Status == models.RoomStatusOccupied
 			actuallyOccupied := len(current.TenantIDs) > 0
 			if wantOccupied != actuallyOccupied {
-				utils.Error(c, http.StatusConflict, "status không khớp với số người thực tế đang ở phòng; hãy dùng đúng luồng check-in/checkout thay vì sửa status trực tiếp")
+				utils.Error(c, http.StatusConflict, "Tình trạng phòng bạn chọn không khớp với thực tế đang có người ở hay không. Vui lòng thực hiện đúng theo quy trình nhận/trả phòng thay vì đổi tình trạng trực tiếp")
 				return
 			}
 			update["status"] = req.Status
@@ -290,11 +290,11 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 				utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
 				return
 			}
-			utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+			utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 			return
 		}
 		if len(current.TenantIDs) > *req.Capacity {
-			utils.Error(c, http.StatusConflict, "Không thể giảm capacity xuống thấp hơn số người đang ở phòng")
+			utils.Error(c, http.StatusConflict, "Không thể đặt số người tối đa thấp hơn số người đang ở trong phòng")
 			return
 		}
 		update["capacity"] = *req.Capacity
@@ -302,7 +302,7 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 
 	res, err := roomsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": update})
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if res.MatchedCount == 0 {
@@ -325,7 +325,7 @@ func (h *RoomHandler) UpdateRoom(c *gin.Context) {
 func (h *RoomHandler) DeleteRoom(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Không tìm thấy phòng này")
 		return
 	}
 
@@ -348,27 +348,27 @@ func (h *RoomHandler) DeleteRoom(c *gin.Context) {
 	invoicesCol := config.GetCollection("invoices")
 	invoiceCount, err := invoicesCol.CountDocuments(ctx, bson.M{"room_id": id})
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if invoiceCount > 0 {
-		utils.Error(c, http.StatusConflict, "Không thể xóa phòng đã từng có hóa đơn (sẽ làm mồ côi dữ liệu lịch sử); hãy đặt status phù hợp thay vì xóa")
+		utils.Error(c, http.StatusConflict, "Không thể xóa phòng này vì đã từng phát sinh hóa đơn. Bạn có thể chuyển phòng sang trạng thái ngừng sử dụng thay vì xóa")
 		return
 	}
 
 	contractsCol := config.GetCollection("contracts")
 	contractCount, err := contractsCol.CountDocuments(ctx, bson.M{"room_id": id})
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if contractCount > 0 {
-		utils.Error(c, http.StatusConflict, "Không thể xóa phòng đã từng gắn với hợp đồng thuê (sẽ làm mồ côi dữ liệu lịch sử hợp đồng/cọc); hãy đặt status phù hợp thay vì xóa")
+		utils.Error(c, http.StatusConflict, "Không thể xóa phòng này vì đã từng có hợp đồng thuê gắn với phòng. Bạn có thể chuyển phòng sang trạng thái ngừng sử dụng thay vì xóa")
 		return
 	}
 
 	if _, err := roomsCol.DeleteOne(ctx, bson.M{"_id": id}); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Không thể xóa phòng")
+		utils.Error(c, http.StatusInternalServerError, "Không thể xóa phòng, vui lòng thử lại")
 		return
 	}
 
@@ -387,7 +387,7 @@ func (h *RoomHandler) DeleteRoom(c *gin.Context) {
 func (h *RoomHandler) CheckoutRoom(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Không tìm thấy phòng này")
 		return
 	}
 
@@ -402,7 +402,7 @@ func (h *RoomHandler) CheckoutRoom(c *gin.Context) {
 			utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 
@@ -414,11 +414,11 @@ func (h *RoomHandler) CheckoutRoom(c *gin.Context) {
 	contractsCol := config.GetCollection("contracts")
 	hasActive, err := hasActiveContractForRoom(ctx, contractsCol, id)
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if hasActive {
-		utils.Error(c, http.StatusConflict, "Phòng đang gắn với 1 hợp đồng hiệu lực; hãy dùng POST /api/contracts/{id}/checkout (hoặc /cancel nếu chưa thu cọc) để trả phòng đúng quy trình")
+		utils.Error(c, http.StatusConflict, "Phòng này đang có hợp đồng thuê còn hiệu lực. Vui lòng thực hiện trả phòng thông qua chức năng trả phòng/hủy hợp đồng để đảm bảo đúng quy trình")
 		return
 	}
 
@@ -429,7 +429,7 @@ func (h *RoomHandler) CheckoutRoom(c *gin.Context) {
 		"$unset": bson.M{"tenant_ids": ""},
 	})
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật phòng")
+		utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật thông tin phòng, vui lòng thử lại")
 		return
 	}
 
@@ -439,7 +439,7 @@ func (h *RoomHandler) CheckoutRoom(c *gin.Context) {
 		"$unset": bson.M{"room_id": ""},
 	})
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Trả phòng thành công nhưng cập nhật tài khoản người thuê thất bại")
+		utils.Error(c, http.StatusInternalServerError, "Trả phòng thành công nhưng cập nhật thông tin người thuê chưa hoàn tất, vui lòng kiểm tra lại")
 		return
 	}
 
