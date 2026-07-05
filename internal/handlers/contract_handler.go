@@ -21,6 +21,17 @@ func NewContractHandler() *ContractHandler {
 	return &ContractHandler{}
 }
 
+// dateOnlyLayout: format ngày-tháng-năm dùng cho các trường ngày tháng nhận
+// từ client (start_date, end_date, new_end_date, actual_end_date...). Chỉ
+// cần "YYYY-MM-DD", không yêu cầu giờ/phút/giây/timezone như RFC3339.
+// Khi parse thành công, giờ được gán mặc định 00:00:00 UTC.
+const dateOnlyLayout = "2006-01-02"
+
+// parseDateOnly parse 1 chuỗi ngày dạng "YYYY-MM-DD" thành time.Time (UTC, 00:00:00).
+func parseDateOnly(s string) (time.Time, error) {
+	return time.Parse(dateOnlyLayout, s)
+}
+
 // ---------------------------------------------------------------------
 // Ghi chú thiết kế:
 //
@@ -127,8 +138,8 @@ func populateContractTenants(ctx context.Context, contracts []*models.Contract) 
 type createContractRequest struct {
 	RoomID    string   `json:"room_id" binding:"required"`
 	TenantIDs []string `json:"tenant_ids" binding:"required,min=1"`
-	StartDate string   `json:"start_date" binding:"required"` // RFC3339, vd "2025-07-01T00:00:00Z"
-	EndDate   string   `json:"end_date" binding:"required"`
+	StartDate string   `json:"start_date" binding:"required"` // "YYYY-MM-DD", vd "2025-07-01"
+	EndDate   string   `json:"end_date" binding:"required"`   // "YYYY-MM-DD"
 
 	// MonthlyRent: để trống -> lấy theo giá niêm yết hiện tại của phòng.
 	MonthlyRent   float64 `json:"monthly_rent"`
@@ -162,14 +173,14 @@ func (h *ContractHandler) CreateContract(c *gin.Context) {
 		return
 	}
 
-	startDate, err := time.Parse(time.RFC3339, req.StartDate)
+	startDate, err := parseDateOnly(req.StartDate)
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "start_date không hợp lệ (định dạng RFC3339)")
+		utils.Error(c, http.StatusBadRequest, "start_date không hợp lệ (định dạng YYYY-MM-DD)")
 		return
 	}
-	endDate, err := time.Parse(time.RFC3339, req.EndDate)
+	endDate, err := parseDateOnly(req.EndDate)
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "end_date không hợp lệ (định dạng RFC3339)")
+		utils.Error(c, http.StatusBadRequest, "end_date không hợp lệ (định dạng YYYY-MM-DD)")
 		return
 	}
 	if !endDate.After(startDate) {
@@ -530,7 +541,7 @@ func (h *ContractHandler) UpdateContract(c *gin.Context) {
 // ===================== Extend (gia hạn) =====================
 
 type extendContractRequest struct {
-	NewEndDate     string  `json:"new_end_date" binding:"required"` // RFC3339
+	NewEndDate     string  `json:"new_end_date" binding:"required"` // "YYYY-MM-DD"
 	NewMonthlyRent float64 `json:"new_monthly_rent"`                // để trống = giữ nguyên giá cũ
 	Note           string  `json:"note"`
 }
@@ -560,9 +571,9 @@ func (h *ContractHandler) ExtendContract(c *gin.Context) {
 		return
 	}
 
-	newEndDate, err := time.Parse(time.RFC3339, req.NewEndDate)
+	newEndDate, err := parseDateOnly(req.NewEndDate)
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "new_end_date không hợp lệ (định dạng RFC3339)")
+		utils.Error(c, http.StatusBadRequest, "new_end_date không hợp lệ (định dạng YYYY-MM-DD)")
 		return
 	}
 
@@ -728,7 +739,7 @@ func (h *ContractHandler) CollectDeposit(c *gin.Context) {
 // ===================== Checkout / Chấm dứt hợp đồng =====================
 
 type checkoutContractRequest struct {
-	// ActualEndDate: để trống -> dùng thời điểm hiện tại.
+	// ActualEndDate: để trống -> dùng thời điểm hiện tại. Nếu có, định dạng "YYYY-MM-DD".
 	ActualEndDate string `json:"actual_end_date"`
 
 	// RefundAmount: số tiền cọc thực trả lại cho tenant (có thể < số đã thu
@@ -772,9 +783,9 @@ func (h *ContractHandler) CheckoutContract(c *gin.Context) {
 
 	actualEndDate := time.Now()
 	if req.ActualEndDate != "" {
-		parsed, err := time.Parse(time.RFC3339, req.ActualEndDate)
+		parsed, err := parseDateOnly(req.ActualEndDate)
 		if err != nil {
-			utils.Error(c, http.StatusBadRequest, "actual_end_date không hợp lệ (định dạng RFC3339)")
+			utils.Error(c, http.StatusBadRequest, "actual_end_date không hợp lệ (định dạng YYYY-MM-DD)")
 			return
 		}
 		actualEndDate = parsed
