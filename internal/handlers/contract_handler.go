@@ -163,28 +163,28 @@ type createContractRequest struct {
 func (h *ContractHandler) CreateContract(c *gin.Context) {
 	var req createContractRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Thông tin bạn nhập chưa hợp lệ, vui lòng kiểm tra lại")
 		return
 	}
 
 	roomID, err := primitive.ObjectIDFromHex(req.RoomID)
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "Room ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Phòng bạn chọn không hợp lệ")
 		return
 	}
 
 	startDate, err := parseDateOnly(req.StartDate)
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "start_date không hợp lệ (định dạng YYYY-MM-DD)")
+		utils.Error(c, http.StatusBadRequest, "Ngày bắt đầu không hợp lệ, vui lòng nhập theo định dạng ngày/tháng/năm")
 		return
 	}
 	endDate, err := parseDateOnly(req.EndDate)
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "end_date không hợp lệ (định dạng YYYY-MM-DD)")
+		utils.Error(c, http.StatusBadRequest, "Ngày kết thúc không hợp lệ, vui lòng nhập theo định dạng ngày/tháng/năm")
 		return
 	}
 	if !endDate.After(startDate) {
-		utils.Error(c, http.StatusBadRequest, "end_date phải sau start_date")
+		utils.Error(c, http.StatusBadRequest, "Ngày kết thúc phải sau ngày bắt đầu")
 		return
 	}
 
@@ -193,7 +193,7 @@ func (h *ContractHandler) CreateContract(c *gin.Context) {
 	for _, s := range req.TenantIDs {
 		tid, err := primitive.ObjectIDFromHex(s)
 		if err != nil {
-			utils.Error(c, http.StatusBadRequest, "tenant_ids chứa ID không hợp lệ")
+			utils.Error(c, http.StatusBadRequest, "Danh sách người thuê có thông tin không hợp lệ")
 			return
 		}
 		if seen[tid] {
@@ -213,26 +213,26 @@ func (h *ContractHandler) CreateContract(c *gin.Context) {
 	var room models.Room
 	if err := roomsCol.FindOne(ctx, bson.M{"_id": roomID}).Decode(&room); err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng")
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy phòng này")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 
 	// Không cho tạo hợp đồng mới nếu phòng đang có hợp đồng active khác.
 	activeCount, err := contractsCol.CountDocuments(ctx, bson.M{"room_id": roomID, "status": models.ContractStatusActive})
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if activeCount > 0 {
-		utils.Error(c, http.StatusConflict, "Phòng đang có hợp đồng hiệu lực khác, không thể tạo hợp đồng mới")
+		utils.Error(c, http.StatusConflict, "Phòng này đang có hợp đồng còn hiệu lực, không thể tạo hợp đồng mới")
 		return
 	}
 
 	if room.Capacity > 0 && len(tenantIDs) > room.Capacity {
-		utils.Error(c, http.StatusConflict, "Số người thuê vượt quá sức chứa (capacity) của phòng")
+		utils.Error(c, http.StatusConflict, "Số người thuê đã chọn vượt quá sức chứa tối đa của phòng")
 		return
 	}
 
@@ -241,14 +241,14 @@ func (h *ContractHandler) CreateContract(c *gin.Context) {
 		var tenant models.User
 		if err := usersCol.FindOne(ctx, bson.M{"_id": tid, "role": models.RoleTenant}).Decode(&tenant); err != nil {
 			if err == mongo.ErrNoDocuments {
-				utils.Error(c, http.StatusNotFound, "Không tìm thấy người thuê với ID: "+tid.Hex())
+				utils.Error(c, http.StatusNotFound, "Có một người thuê trong danh sách không tồn tại")
 				return
 			}
-			utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+			utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 			return
 		}
 		if tenant.RoomID != nil {
-			utils.Error(c, http.StatusConflict, "Người thuê '"+tenant.FullName+"' đang thuộc phòng khác, cần trả phòng trước")
+			utils.Error(c, http.StatusConflict, "Người thuê '"+tenant.FullName+"' đang ở phòng khác, cần trả phòng đó trước")
 			return
 		}
 	}
@@ -288,10 +288,10 @@ func (h *ContractHandler) CreateContract(c *gin.Context) {
 	// hợp đồng nào đứng sau" như cách làm cũ.
 	if _, err := contractsCol.InsertOne(ctx, contract); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
-			utils.Error(c, http.StatusConflict, "Phòng vừa được tạo hợp đồng active bởi request khác, vui lòng thử lại")
+			utils.Error(c, http.StatusConflict, "Phòng này vừa được tạo hợp đồng bởi người khác, vui lòng thử lại")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Không thể tạo hợp đồng")
+		utils.Error(c, http.StatusInternalServerError, "Không thể tạo hợp đồng, vui lòng thử lại")
 		return
 	}
 
@@ -311,10 +311,10 @@ func (h *ContractHandler) CreateContract(c *gin.Context) {
 		if _, err := addTenantToRoom(ctx, roomsCol, roomID, tid); err != nil {
 			rollback()
 			if err == ErrRoomFull {
-				utils.Error(c, http.StatusConflict, "Phòng đã đủ số người tối đa (capacity)")
+				utils.Error(c, http.StatusConflict, "Phòng đã đủ số người tối đa, không thể xếp thêm")
 				return
 			}
-			utils.Error(c, http.StatusInternalServerError, "Không thể gán người thuê vào phòng, đã hủy hợp đồng vừa tạo")
+			utils.Error(c, http.StatusInternalServerError, "Không thể xếp người thuê vào phòng, hợp đồng vừa tạo đã được hủy")
 			return
 		}
 		if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": tid}, bson.M{
@@ -322,7 +322,7 @@ func (h *ContractHandler) CreateContract(c *gin.Context) {
 		}); err != nil {
 			assigned = append(assigned, tid) // đã addTenantToRoom thành công, cần gỡ khi rollback
 			rollback()
-			utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật tài khoản người thuê, đã hủy hợp đồng vừa tạo")
+			utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật thông tin người thuê, hợp đồng vừa tạo đã được hủy")
 			return
 		}
 		assigned = append(assigned, tid)
@@ -367,7 +367,7 @@ func (h *ContractHandler) ListContracts(c *gin.Context) {
 	if role == string(models.RoleTenant) {
 		userID, err := primitive.ObjectIDFromHex(c.GetString("user_id"))
 		if err != nil {
-			utils.Error(c, http.StatusBadRequest, "User ID không hợp lệ")
+			utils.Error(c, http.StatusBadRequest, "Không xác định được tài khoản của bạn, vui lòng đăng nhập lại")
 			return
 		}
 		filter["tenant_ids"] = userID
@@ -376,7 +376,7 @@ func (h *ContractHandler) ListContracts(c *gin.Context) {
 	if roomIDStr := c.Query("room_id"); roomIDStr != "" {
 		roomID, err := primitive.ObjectIDFromHex(roomIDStr)
 		if err != nil {
-			utils.Error(c, http.StatusBadRequest, "room_id không hợp lệ")
+			utils.Error(c, http.StatusBadRequest, "Phòng bạn muốn lọc không hợp lệ")
 			return
 		}
 		filter["room_id"] = roomID
@@ -385,7 +385,7 @@ func (h *ContractHandler) ListContracts(c *gin.Context) {
 	if statusStr := c.Query("status"); statusStr != "" {
 		status := models.ContractStatus(statusStr)
 		if !status.IsValid() {
-			utils.Error(c, http.StatusBadRequest, "status không hợp lệ")
+			utils.Error(c, http.StatusBadRequest, "Trạng thái lọc không hợp lệ")
 			return
 		}
 		filter["status"] = status
@@ -393,14 +393,14 @@ func (h *ContractHandler) ListContracts(c *gin.Context) {
 
 	cursor, err := contractsCol.Find(ctx, filter, options_findSortByCreatedDesc())
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	defer cursor.Close(ctx)
 
 	contracts := make([]models.Contract, 0)
 	if err := cursor.All(ctx, &contracts); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi đọc dữ liệu")
+		utils.Error(c, http.StatusInternalServerError, "Không thể tải danh sách hợp đồng, vui lòng thử lại")
 		return
 	}
 
@@ -428,7 +428,7 @@ func (h *ContractHandler) ListContracts(c *gin.Context) {
 func (h *ContractHandler) GetContract(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Hợp đồng không hợp lệ")
 		return
 	}
 
@@ -439,10 +439,10 @@ func (h *ContractHandler) GetContract(c *gin.Context) {
 	var contract models.Contract
 	if err := contractsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&contract); err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng")
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng này")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 
@@ -453,7 +453,7 @@ func (h *ContractHandler) GetContract(c *gin.Context) {
 
 	_ = populateContractTenants(ctx, []*models.Contract{&contract})
 
-	utils.Success(c, http.StatusOK, "OK", contract)
+	utils.Success(c, http.StatusOK, "Lấy thông tin hợp đồng thành công", contract)
 }
 
 // ===================== Update (chỉnh sửa thông tin, không đổi trạng thái) =====================
@@ -481,13 +481,13 @@ type updateContractRequest struct {
 func (h *ContractHandler) UpdateContract(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Hợp đồng không hợp lệ")
 		return
 	}
 
 	var req updateContractRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Thông tin bạn nhập chưa hợp lệ, vui lòng kiểm tra lại")
 		return
 	}
 
@@ -499,14 +499,14 @@ func (h *ContractHandler) UpdateContract(c *gin.Context) {
 	var contract models.Contract
 	if err := contractsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&contract); err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng")
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng này")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if contract.Status.IsClosed() {
-		utils.Error(c, http.StatusConflict, "Hợp đồng đã đóng, không thể chỉnh sửa")
+		utils.Error(c, http.StatusConflict, "Hợp đồng đã kết thúc nên không thể chỉnh sửa")
 		return
 	}
 
@@ -519,7 +519,7 @@ func (h *ContractHandler) UpdateContract(c *gin.Context) {
 	}
 	if req.DepositAmount != nil {
 		if contract.DepositPaid > 0 {
-			utils.Error(c, http.StatusConflict, "Đã thu cọc, không thể sửa deposit_amount (nếu cần đổi, hãy dùng ghi chú và điều chỉnh khi checkout)")
+			utils.Error(c, http.StatusConflict, "Hợp đồng đã thu cọc nên không thể sửa số tiền cọc; nếu cần điều chỉnh, vui lòng ghi chú lại và xử lý khi trả phòng")
 			return
 		}
 		update["deposit_amount"] = *req.DepositAmount
@@ -527,11 +527,11 @@ func (h *ContractHandler) UpdateContract(c *gin.Context) {
 
 	res, err := contractsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": update})
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if res.MatchedCount == 0 {
-		utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng")
+		utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng này")
 		return
 	}
 
@@ -561,19 +561,19 @@ type extendContractRequest struct {
 func (h *ContractHandler) ExtendContract(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Hợp đồng không hợp lệ")
 		return
 	}
 
 	var req extendContractRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Thông tin bạn nhập chưa hợp lệ, vui lòng kiểm tra lại")
 		return
 	}
 
 	newEndDate, err := parseDateOnly(req.NewEndDate)
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "new_end_date không hợp lệ (định dạng YYYY-MM-DD)")
+		utils.Error(c, http.StatusBadRequest, "Ngày gia hạn không hợp lệ, vui lòng nhập theo định dạng ngày/tháng/năm")
 		return
 	}
 
@@ -585,18 +585,18 @@ func (h *ContractHandler) ExtendContract(c *gin.Context) {
 	var contract models.Contract
 	if err := contractsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&contract); err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng")
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng này")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if contract.Status != models.ContractStatusActive {
-		utils.Error(c, http.StatusConflict, "Chỉ có thể gia hạn hợp đồng đang active")
+		utils.Error(c, http.StatusConflict, "Chỉ có thể gia hạn hợp đồng đang còn hiệu lực")
 		return
 	}
 	if !newEndDate.After(contract.EndDate) {
-		utils.Error(c, http.StatusBadRequest, "new_end_date phải sau end_date hiện tại")
+		utils.Error(c, http.StatusBadRequest, "Ngày gia hạn phải sau ngày kết thúc hiện tại của hợp đồng")
 		return
 	}
 
@@ -620,7 +620,7 @@ func (h *ContractHandler) ExtendContract(c *gin.Context) {
 		"$set":  update,
 		"$push": bson.M{"renewals": renewal},
 	}); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Không thể gia hạn hợp đồng")
+		utils.Error(c, http.StatusInternalServerError, "Không thể gia hạn hợp đồng, vui lòng thử lại")
 		return
 	}
 
@@ -652,17 +652,17 @@ type collectDepositRequest struct {
 func (h *ContractHandler) CollectDeposit(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Hợp đồng không hợp lệ")
 		return
 	}
 
 	var req collectDepositRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Thông tin bạn nhập chưa hợp lệ, vui lòng kiểm tra lại")
 		return
 	}
 	if !req.Method.IsValid() {
-		utils.Error(c, http.StatusBadRequest, "method không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Phương thức thanh toán không hợp lệ")
 		return
 	}
 
@@ -675,14 +675,14 @@ func (h *ContractHandler) CollectDeposit(c *gin.Context) {
 	var contract models.Contract
 	if err := contractsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&contract); err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng")
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng này")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if contract.Status != models.ContractStatusActive {
-		utils.Error(c, http.StatusConflict, "Hợp đồng không còn hiệu lực")
+		utils.Error(c, http.StatusConflict, "Hợp đồng này không còn hiệu lực")
 		return
 	}
 
@@ -691,7 +691,7 @@ func (h *ContractHandler) CollectDeposit(c *gin.Context) {
 	// hóa đơn. Nếu thực sự cần thu thêm cọc (đổi thỏa thuận), manager phải sửa
 	// deposit_amount trước (chỉ sửa được khi chưa thu đồng nào - xem UpdateContract).
 	if contract.DepositPaid+req.Amount > contract.DepositAmount {
-		utils.Error(c, http.StatusBadRequest, "Số tiền thu vượt quá deposit_amount đã thỏa thuận trong hợp đồng")
+		utils.Error(c, http.StatusBadRequest, "Số tiền thu vượt quá số tiền cọc đã thỏa thuận trong hợp đồng")
 		return
 	}
 
@@ -710,7 +710,7 @@ func (h *ContractHandler) CollectDeposit(c *gin.Context) {
 		CreatedAt:   now,
 	}
 	if _, err := depositTxCol.InsertOne(ctx, tx); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Không thể ghi nhận thu cọc")
+		utils.Error(c, http.StatusInternalServerError, "Không thể ghi nhận thu cọc, vui lòng thử lại")
 		return
 	}
 
@@ -724,7 +724,7 @@ func (h *ContractHandler) CollectDeposit(c *gin.Context) {
 			"updated_at":     now,
 		},
 	}); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Đã ghi nhận giao dịch nhưng cập nhật hợp đồng thất bại, cần kiểm tra lại thủ công")
+		utils.Error(c, http.StatusInternalServerError, "Đã ghi nhận khoản thu nhưng cập nhật hợp đồng thất bại, vui lòng kiểm tra lại")
 		return
 	}
 
@@ -771,13 +771,13 @@ type checkoutContractRequest struct {
 func (h *ContractHandler) CheckoutContract(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Hợp đồng không hợp lệ")
 		return
 	}
 
 	var req checkoutContractRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Thông tin bạn nhập chưa hợp lệ, vui lòng kiểm tra lại")
 		return
 	}
 
@@ -785,7 +785,7 @@ func (h *ContractHandler) CheckoutContract(c *gin.Context) {
 	if req.ActualEndDate != "" {
 		parsed, err := parseDateOnly(req.ActualEndDate)
 		if err != nil {
-			utils.Error(c, http.StatusBadRequest, "actual_end_date không hợp lệ (định dạng YYYY-MM-DD)")
+			utils.Error(c, http.StatusBadRequest, "Ngày kết thúc thực tế không hợp lệ, vui lòng nhập theo định dạng ngày/tháng/năm")
 			return
 		}
 		actualEndDate = parsed
@@ -807,14 +807,14 @@ func (h *ContractHandler) CheckoutContract(c *gin.Context) {
 	var contract models.Contract
 	if err := contractsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&contract); err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng")
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng này")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if contract.Status != models.ContractStatusActive {
-		utils.Error(c, http.StatusConflict, "Hợp đồng không còn hiệu lực (đã đóng trước đó)")
+		utils.Error(c, http.StatusConflict, "Hợp đồng này đã kết thúc từ trước")
 		return
 	}
 
@@ -846,7 +846,7 @@ func (h *ContractHandler) CheckoutContract(c *gin.Context) {
 			CreatedAt:   now,
 		}
 		if _, err := depositTxCol.InsertOne(ctx, refundTx); err != nil {
-			utils.Error(c, http.StatusInternalServerError, "Không thể ghi nhận hoàn cọc")
+			utils.Error(c, http.StatusInternalServerError, "Không thể ghi nhận hoàn cọc, vui lòng thử lại")
 			return
 		}
 	}
@@ -862,7 +862,7 @@ func (h *ContractHandler) CheckoutContract(c *gin.Context) {
 			CreatedAt:   now,
 		}
 		if _, err := depositTxCol.InsertOne(ctx, forfeitTx); err != nil {
-			utils.Error(c, http.StatusInternalServerError, "Không thể ghi nhận giữ cọc")
+			utils.Error(c, http.StatusInternalServerError, "Không thể ghi nhận phần cọc bị giữ lại, vui lòng thử lại")
 			return
 		}
 	}
@@ -895,7 +895,7 @@ func (h *ContractHandler) CheckoutContract(c *gin.Context) {
 			"updated_at":         now,
 		},
 	}); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật hợp đồng")
+		utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật hợp đồng, vui lòng thử lại")
 		return
 	}
 
@@ -904,19 +904,19 @@ func (h *ContractHandler) CheckoutContract(c *gin.Context) {
 	// hợp đồng active/phòng, nhưng vẫn lặp theo tenant_ids để chắc chắn).
 	for _, tid := range contract.TenantIDs {
 		if _, err := removeTenantFromRoom(ctx, roomsCol, contract.RoomID, tid); err != nil && err != mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusInternalServerError, "Đã đóng hợp đồng nhưng gỡ tenant khỏi phòng thất bại, cần kiểm tra lại thủ công")
+			utils.Error(c, http.StatusInternalServerError, "Đã đóng hợp đồng nhưng gỡ người thuê khỏi phòng thất bại, cần kiểm tra lại thủ công")
 			return
 		}
 		if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": tid}, bson.M{
 			"$set":   bson.M{"updated_at": now},
 			"$unset": bson.M{"room_id": ""},
 		}); err != nil {
-			utils.Error(c, http.StatusInternalServerError, "Đã đóng hợp đồng nhưng cập nhật tài khoản tenant thất bại, cần kiểm tra lại thủ công")
+			utils.Error(c, http.StatusInternalServerError, "Đã đóng hợp đồng nhưng cập nhật thông tin người thuê thất bại, cần kiểm tra lại thủ công")
 			return
 		}
 	}
 
-	utils.Success(c, http.StatusOK, "Checkout hợp đồng thành công", gin.H{
+	utils.Success(c, http.StatusOK, "Kết thúc hợp đồng và trả phòng thành công", gin.H{
 		"contract_id":     id,
 		"status":          newStatus,
 		"deposit_status":  newDepositStatus,
@@ -942,7 +942,7 @@ func (h *ContractHandler) CheckoutContract(c *gin.Context) {
 func (h *ContractHandler) CancelContract(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Hợp đồng không hợp lệ")
 		return
 	}
 
@@ -956,18 +956,18 @@ func (h *ContractHandler) CancelContract(c *gin.Context) {
 	var contract models.Contract
 	if err := contractsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&contract); err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng")
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng này")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if contract.Status != models.ContractStatusActive {
-		utils.Error(c, http.StatusConflict, "Chỉ có thể hủy hợp đồng đang hiệu lực")
+		utils.Error(c, http.StatusConflict, "Chỉ có thể hủy hợp đồng đang còn hiệu lực")
 		return
 	}
 	if contract.DepositPaid > 0 {
-		utils.Error(c, http.StatusConflict, "Đã thu cọc, không thể hủy trực tiếp; hãy dùng Checkout để hoàn/giữ cọc")
+		utils.Error(c, http.StatusConflict, "Hợp đồng đã thu cọc nên không thể hủy trực tiếp; vui lòng dùng chức năng trả phòng/kết thúc hợp đồng để hoàn hoặc giữ cọc")
 		return
 	}
 
@@ -979,7 +979,7 @@ func (h *ContractHandler) CancelContract(c *gin.Context) {
 			"updated_at":      now,
 		},
 	}); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Không thể hủy hợp đồng")
+		utils.Error(c, http.StatusInternalServerError, "Không thể hủy hợp đồng, vui lòng thử lại")
 		return
 	}
 
@@ -992,7 +992,7 @@ func (h *ContractHandler) CancelContract(c *gin.Context) {
 			"$set":   bson.M{"updated_at": now},
 			"$unset": bson.M{"room_id": ""},
 		}); err != nil {
-			utils.Error(c, http.StatusInternalServerError, "Đã hủy hợp đồng nhưng cập nhật tài khoản tenant thất bại, cần kiểm tra lại thủ công")
+			utils.Error(c, http.StatusInternalServerError, "Đã hủy hợp đồng nhưng cập nhật thông tin người thuê thất bại, cần kiểm tra lại thủ công")
 			return
 		}
 	}
@@ -1031,18 +1031,18 @@ type addTenantToContractRequest struct {
 func (h *ContractHandler) AddTenantToContract(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Hợp đồng không hợp lệ")
 		return
 	}
 
 	var req addTenantToContractRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Thông tin bạn nhập chưa hợp lệ, vui lòng kiểm tra lại")
 		return
 	}
 	tenantID, err := primitive.ObjectIDFromHex(req.TenantID)
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "tenant_id không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Người thuê bạn chọn không hợp lệ")
 		return
 	}
 
@@ -1056,41 +1056,41 @@ func (h *ContractHandler) AddTenantToContract(c *gin.Context) {
 	var contract models.Contract
 	if err := contractsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&contract); err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng")
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng này")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if contract.Status != models.ContractStatusActive {
-		utils.Error(c, http.StatusConflict, "Chỉ có thể thêm người vào hợp đồng đang active")
+		utils.Error(c, http.StatusConflict, "Chỉ có thể thêm người vào hợp đồng đang còn hiệu lực")
 		return
 	}
 	if containsObjectID(contract.TenantIDs, tenantID) {
-		utils.Error(c, http.StatusConflict, "Người thuê đã đứng tên trong hợp đồng này rồi")
+		utils.Error(c, http.StatusConflict, "Người thuê này đã có tên trong hợp đồng rồi")
 		return
 	}
 
 	var tenant models.User
 	if err := usersCol.FindOne(ctx, bson.M{"_id": tenantID, "role": models.RoleTenant}).Decode(&tenant); err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusNotFound, "Không tìm thấy người thuê")
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy người thuê này")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if tenant.RoomID != nil {
-		utils.Error(c, http.StatusConflict, "Người thuê '"+tenant.FullName+"' đang thuộc phòng khác, cần trả phòng trước")
+		utils.Error(c, http.StatusConflict, "Người thuê '"+tenant.FullName+"' đang ở phòng khác, cần trả phòng đó trước")
 		return
 	}
 	tenantHasActive, err := hasActiveContractForTenant(ctx, contractsCol, tenantID)
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if tenantHasActive {
-		utils.Error(c, http.StatusConflict, "Người thuê đang đứng tên trong 1 hợp đồng hiệu lực khác")
+		utils.Error(c, http.StatusConflict, "Người thuê này đang có tên trong 1 hợp đồng khác còn hiệu lực")
 		return
 	}
 
@@ -1104,7 +1104,7 @@ func (h *ContractHandler) AddTenantToContract(c *gin.Context) {
 		"$addToSet": bson.M{"tenant_ids": tenantID},
 		"$set":      bson.M{"updated_at": now},
 	}); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Không thể thêm người thuê vào hợp đồng")
+		utils.Error(c, http.StatusInternalServerError, "Không thể thêm người thuê vào hợp đồng, vui lòng thử lại")
 		return
 	}
 
@@ -1115,10 +1115,10 @@ func (h *ContractHandler) AddTenantToContract(c *gin.Context) {
 			"$set":  bson.M{"updated_at": now},
 		})
 		if err == ErrRoomFull {
-			utils.Error(c, http.StatusConflict, "Phòng đã đủ số người tối đa (capacity), không thể thêm")
+			utils.Error(c, http.StatusConflict, "Phòng đã đủ số người tối đa, không thể thêm")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Không thể gán người thuê vào phòng")
+		utils.Error(c, http.StatusInternalServerError, "Không thể xếp người thuê vào phòng, vui lòng thử lại")
 		return
 	}
 	if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": tenantID}, bson.M{
@@ -1130,7 +1130,7 @@ func (h *ContractHandler) AddTenantToContract(c *gin.Context) {
 			"$set":  bson.M{"updated_at": now},
 		})
 		_, _ = removeTenantFromRoom(ctx, roomsCol, contract.RoomID, tenantID)
-		utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật tài khoản người thuê, đã hoàn tác thao tác thêm người")
+		utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật thông tin người thuê, thao tác thêm người đã được hoàn tác")
 		return
 	}
 
@@ -1158,12 +1158,12 @@ func (h *ContractHandler) AddTenantToContract(c *gin.Context) {
 func (h *ContractHandler) RemoveTenantFromContract(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Hợp đồng không hợp lệ")
 		return
 	}
 	tenantID, err := primitive.ObjectIDFromHex(c.Param("tenantId"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "tenantId không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Người thuê bạn chọn không hợp lệ")
 		return
 	}
 
@@ -1177,35 +1177,35 @@ func (h *ContractHandler) RemoveTenantFromContract(c *gin.Context) {
 	var contract models.Contract
 	if err := contractsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&contract); err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng")
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng này")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if contract.Status != models.ContractStatusActive {
-		utils.Error(c, http.StatusConflict, "Chỉ có thể gỡ người khỏi hợp đồng đang active")
+		utils.Error(c, http.StatusConflict, "Chỉ có thể gỡ người khỏi hợp đồng đang còn hiệu lực")
 		return
 	}
 	if !containsObjectID(contract.TenantIDs, tenantID) {
-		utils.Error(c, http.StatusNotFound, "Người thuê không đứng tên trong hợp đồng này")
+		utils.Error(c, http.StatusNotFound, "Người thuê này không có tên trong hợp đồng")
 		return
 	}
 	if len(contract.TenantIDs) <= 1 {
-		utils.Error(c, http.StatusConflict, "Đây là người thuê cuối cùng trong hợp đồng; hãy dùng /checkout hoặc /cancel để đóng hợp đồng thay vì gỡ từng người")
+		utils.Error(c, http.StatusConflict, "Đây là người thuê cuối cùng trong hợp đồng, vui lòng dùng chức năng kết thúc hoặc hủy hợp đồng thay vì gỡ từng người")
 		return
 	}
 
 	now := time.Now()
 	if _, err := removeTenantFromRoom(ctx, roomsCol, contract.RoomID, tenantID); err != nil && err != mongo.ErrNoDocuments {
-		utils.Error(c, http.StatusInternalServerError, "Không thể gỡ người thuê khỏi phòng")
+		utils.Error(c, http.StatusInternalServerError, "Không thể gỡ người thuê khỏi phòng, vui lòng thử lại")
 		return
 	}
 	if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": tenantID}, bson.M{
 		"$set":   bson.M{"updated_at": now},
 		"$unset": bson.M{"room_id": ""},
 	}); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Đã gỡ khỏi phòng nhưng cập nhật tài khoản người thuê thất bại, cần kiểm tra lại thủ công")
+		utils.Error(c, http.StatusInternalServerError, "Đã gỡ khỏi phòng nhưng cập nhật thông tin người thuê thất bại, cần kiểm tra lại thủ công")
 		return
 	}
 	if _, err := contractsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
@@ -1237,7 +1237,7 @@ func (h *ContractHandler) RemoveTenantFromContract(c *gin.Context) {
 func (h *ContractHandler) ListDepositTransactions(c *gin.Context) {
 	id, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		utils.Error(c, http.StatusBadRequest, "Hợp đồng không hợp lệ")
 		return
 	}
 
@@ -1248,10 +1248,10 @@ func (h *ContractHandler) ListDepositTransactions(c *gin.Context) {
 	var contract models.Contract
 	if err := contractsCol.FindOne(ctx, bson.M{"_id": id}).Decode(&contract); err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng")
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hợp đồng này")
 			return
 		}
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	if !canAccessContract(c, &contract) {
@@ -1262,16 +1262,16 @@ func (h *ContractHandler) ListDepositTransactions(c *gin.Context) {
 	depositTxCol := config.GetCollection("deposit_transactions")
 	cursor, err := depositTxCol.Find(ctx, bson.M{"contract_id": id}, options_findSortByCreatedDesc())
 	if err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		utils.Error(c, http.StatusInternalServerError, "Đã có lỗi xảy ra, vui lòng thử lại sau")
 		return
 	}
 	defer cursor.Close(ctx)
 
 	txs := make([]models.DepositTransaction, 0)
 	if err := cursor.All(ctx, &txs); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Lỗi đọc dữ liệu")
+		utils.Error(c, http.StatusInternalServerError, "Không thể tải lịch sử giao dịch cọc, vui lòng thử lại")
 		return
 	}
 
-	utils.Success(c, http.StatusOK, "OK", txs)
+	utils.Success(c, http.StatusOK, "Lấy lịch sử giao dịch cọc thành công", txs)
 }
