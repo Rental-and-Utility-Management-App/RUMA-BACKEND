@@ -21,6 +21,53 @@ func NewRoomHandler() *RoomHandler {
 	return &RoomHandler{}
 }
 
+// resolveCurrentMonthPayment tra cứu hóa đơn của phòng trong THÁNG HIỆN TẠI
+// (theo giờ server) và quy ra RoomPaymentStatus để gắn vào response phòng.
+// Không tính hóa đơn "cancelled" (coi như không tồn tại).
+func resolveCurrentMonthPayment(ctx context.Context, invoicesCol *mongo.Collection, roomID primitive.ObjectID) (*models.RoomCurrentMonthPayment, error) {
+	now := time.Now()
+	month, year := int(now.Month()), now.Year()
+
+	var invoice models.Invoice
+	err := invoicesCol.FindOne(ctx, bson.M{
+		"room_id": roomID, "month": month, "year": year,
+		"status": bson.M{"$ne": models.InvoiceStatusCancelled},
+	}).Decode(&invoice)
+
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return &models.RoomCurrentMonthPayment{
+				Month:  month,
+				Year:   year,
+				Status: models.RoomPaymentStatusNoInvoice,
+			}, nil
+		}
+		return nil, err
+	}
+
+	status := models.RoomPaymentStatusUnpaid
+	switch invoice.Status {
+	case models.InvoiceStatusDraft:
+		status = models.RoomPaymentStatusDraft
+	case models.InvoiceStatusPartial:
+		status = models.RoomPaymentStatusPartial
+	case models.InvoiceStatusPaid:
+		status = models.RoomPaymentStatusPaid
+	}
+
+	dueDate := invoice.DueDate
+	return &models.RoomCurrentMonthPayment{
+		Month:       month,
+		Year:        year,
+		Status:      status,
+		InvoiceID:   invoice.ID,
+		TotalAmount: invoice.TotalAmount,
+		PaidAmount:  invoice.PaidAmount,
+		DueDate:     &dueDate,
+		Overdue:     invoice.Overdue,
+	}, nil
+}
+
 type createRoomRequest struct {
 	Code                   string  `json:"code" binding:"required"`
 	Name                   string  `json:"name"`
@@ -129,6 +176,16 @@ func (h *RoomHandler) ListRooms(c *gin.Context) {
 		return
 	}
 
+	invoicesCol := config.GetCollection("invoices")
+	for i := range rooms {
+		payment, err := resolveCurrentMonthPayment(ctx, invoicesCol, rooms[i].ID)
+		if err == nil {
+			rooms[i].CurrentMonthPayment = payment
+		}
+		// Lỗi tra cứu hóa đơn (hiếm khi xảy ra) không nên chặn cả danh sách phòng -
+		// bỏ qua, phòng đó sẽ không có current_month_payment trong response.
+	}
+
 	utils.Success(c, http.StatusOK, "Lấy danh sách phòng thành công", rooms)
 }
 
@@ -184,6 +241,11 @@ func (h *RoomHandler) GetRoom(c *gin.Context) {
 				}
 			}
 		}
+	}
+
+	invoicesCol := config.GetCollection("invoices")
+	if payment, err := resolveCurrentMonthPayment(ctx, invoicesCol, room.ID); err == nil {
+		room.CurrentMonthPayment = payment
 	}
 
 	utils.Success(c, http.StatusOK, "OK", room)
