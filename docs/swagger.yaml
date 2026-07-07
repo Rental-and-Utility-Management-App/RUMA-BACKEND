@@ -1457,6 +1457,46 @@ paths:
       summary: Gán/đổi phòng cho người thuê có sẵn
       tags:
       - Users
+  /api/users/me/avatar:
+    delete:
+      description: Gỡ ảnh đại diện hiện tại của user đang đăng nhập.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Gỡ ảnh đại diện
+      tags:
+      - Users
+    post:
+      consumes:
+      - multipart/form-data
+      description: Upload ảnh đại diện cho user đang đăng nhập (cả Manager và Tenant),
+        lưu trên Cloudinary.
+      parameters:
+      - description: File ảnh (jpeg/png/webp, tối đa 5MB)
+        in: formData
+        name: avatar
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload/đổi ảnh đại diện
+      tags:
+      - Users
   /api/webhooks/sepay:
     post:
       consumes:
