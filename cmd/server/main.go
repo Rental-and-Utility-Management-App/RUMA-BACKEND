@@ -7,6 +7,7 @@ import (
 
 	"rental-app/internal/config"
 	"rental-app/internal/routes"
+	"rental-app/internal/scheduler"
 )
 
 // @title RUMA Backend API
@@ -36,6 +37,10 @@ func main() {
 	}
 
 	config.ConnectMongo(cfg)
+
+	// Chạy các cron job nền: tạo hóa đơn nháp đầu tháng, quét hóa đơn quá hạn,
+	// quét hợp đồng sắp hết hạn (xem internal/scheduler).
+	scheduler.Start()
 
 	r := gin.Default()
 

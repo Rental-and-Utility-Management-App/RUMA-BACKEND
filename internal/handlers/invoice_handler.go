@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -308,6 +309,9 @@ func (h *InvoiceHandler) ListInvoices(c *gin.Context) {
 			bson.M{"tenant_ids": userID},
 			bson.M{"tenant_id": userID, "tenant_ids": bson.M{"$exists": false}},
 		}
+		// Hóa đơn "draft" (do cron tự tạo, chưa có chỉ số điện/nước thật, chưa
+		// được manager xác nhận) không hiển thị cho tenant.
+		filter["status"] = bson.M{"$ne": models.InvoiceStatusDraft}
 	}
 
 	if roomIDStr := c.Query("room_id"); roomIDStr != "" {
@@ -316,8 +320,20 @@ func (h *InvoiceHandler) ListInvoices(c *gin.Context) {
 			filter["room_id"] = roomID
 		}
 	}
+	// status hỗ trợ thêm giá trị ảo "overdue" (không phải 1 InvoiceStatus thật)
+	// để lọc các hóa đơn unpaid/partial đã quá hạn (dựa vào field overdue do
+	// cron RunOverdueInvoiceCheck cập nhật hàng ngày), thay vì phải tự tính lại
+	// due_date < now ở FE.
 	if status := c.Query("status"); status != "" {
-		filter["status"] = status
+		if role == string(models.RoleTenant) && status == "draft" {
+			utils.Error(c, http.StatusForbidden, "Bạn không có quyền xem hóa đơn nháp")
+			return
+		}
+		if status == "overdue" {
+			filter["overdue"] = true
+		} else {
+			filter["status"] = status
+		}
 	}
 
 	invoicesCol := config.GetCollection("invoices")
@@ -370,13 +386,14 @@ func (h *InvoiceHandler) GetInvoice(c *gin.Context) {
 
 	// Tenant chỉ được xem hóa đơn của phòng mình đang/đã ở (bất kỳ ai trong
 	// tenant_ids, không chỉ người đại diện). Hóa đơn cũ chưa có tenant_ids thì
-	// fallback so khớp tenant_id.
+	// fallback so khớp tenant_id. Hóa đơn "draft" chưa xác nhận cũng không hiển thị.
 	role := c.GetString("role")
 	if role == string(models.RoleTenant) {
 		userIDStr := c.GetString("user_id")
 		userID, err := primitive.ObjectIDFromHex(userIDStr)
-		allowed := err == nil && (containsObjectID(invoice.TenantIDs, userID) ||
-			(len(invoice.TenantIDs) == 0 && invoice.TenantID == userID))
+		allowed := err == nil && invoice.Status != models.InvoiceStatusDraft &&
+			(containsObjectID(invoice.TenantIDs, userID) ||
+				(len(invoice.TenantIDs) == 0 && invoice.TenantID == userID))
 		if !allowed {
 			utils.Error(c, http.StatusForbidden, "Bạn không có quyền xem hóa đơn này")
 			return
@@ -420,16 +437,23 @@ func (h *InvoiceHandler) GetInvoiceQRCode(c *gin.Context) {
 	}
 
 	// Tenant chỉ được lấy QR của hóa đơn thuộc phòng mình (mọi tenant ở ghép).
+	// Hóa đơn "draft" chưa xác nhận cũng không hiển thị.
 	role := c.GetString("role")
 	if role == string(models.RoleTenant) {
 		userIDStr := c.GetString("user_id")
 		userID, err := primitive.ObjectIDFromHex(userIDStr)
-		allowed := err == nil && (containsObjectID(invoice.TenantIDs, userID) ||
-			(len(invoice.TenantIDs) == 0 && invoice.TenantID == userID))
+		allowed := err == nil && invoice.Status != models.InvoiceStatusDraft &&
+			(containsObjectID(invoice.TenantIDs, userID) ||
+				(len(invoice.TenantIDs) == 0 && invoice.TenantID == userID))
 		if !allowed {
 			utils.Error(c, http.StatusForbidden, "Bạn không có quyền xem hóa đơn này")
 			return
 		}
+	}
+
+	if invoice.Status == models.InvoiceStatusDraft {
+		utils.Error(c, http.StatusConflict, "Hóa đơn này còn ở dạng nháp, cần xác nhận chỉ số điện/nước trước khi thanh toán")
+		return
 	}
 
 	remaining := invoice.TotalAmount - invoice.PaidAmount
@@ -682,4 +706,338 @@ func (h *InvoiceHandler) CancelInvoice(c *gin.Context) {
 	}
 
 	utils.Success(c, http.StatusOK, "Hủy hóa đơn thành công", nil)
+}
+
+// ===================== Cron: tự động tạo hóa đơn nháp đầu tháng =====================
+
+// GenerateDraftInvoicesResult tóm tắt kết quả 1 lần chạy tạo hóa đơn nháp.
+type GenerateDraftInvoicesResult struct {
+	Created int      `json:"created"`
+	Skipped int      `json:"skipped"`
+	Errors  []string `json:"errors,omitempty"`
+}
+
+// GenerateMonthlyDraftInvoices tạo hóa đơn "draft" cho MỌI phòng đang có hợp
+// đồng active trong tháng/năm chỉ định, nếu phòng đó CHƯA có hóa đơn nào
+// (khác cancelled) cho tháng/năm này. Hóa đơn draft tự suy sẵn tiền phòng
+// (theo giá đã chốt trong hợp đồng) + phí quản lý (theo occupants hiện tại
+// của phòng); điện/nước tạm để bằng chỉ số cũ (0 số tiêu thụ) vì chưa có chỉ
+// số thật - manager chỉ cần vào xem, điền chỉ số điện/nước rồi "xác nhận"
+// (xem ConfirmDraftInvoice) để chuyển hóa đơn sang "unpaid" chính thức.
+//
+// Được gọi bởi internal/scheduler (cron ngày 1 hàng tháng) hoặc chạy tay qua
+// POST /api/invoices/generate-draft.
+func GenerateMonthlyDraftInvoices(ctx context.Context, month, year int) (*GenerateDraftInvoicesResult, error) {
+	result := &GenerateDraftInvoicesResult{}
+
+	contractsCol := config.GetCollection("contracts")
+	roomsCol := config.GetCollection("rooms")
+	invoicesCol := config.GetCollection("invoices")
+
+	cursor, err := contractsCol.Find(ctx, bson.M{"status": models.ContractStatusActive})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var contracts []models.Contract
+	if err := cursor.All(ctx, &contracts); err != nil {
+		return nil, err
+	}
+
+	for _, contract := range contracts {
+		count, err := invoicesCol.CountDocuments(ctx, bson.M{
+			"room_id": contract.RoomID, "month": month, "year": year,
+			"status": bson.M{"$ne": models.InvoiceStatusCancelled},
+		})
+		if err != nil {
+			result.Errors = append(result.Errors, "phòng "+contract.RoomCode+": "+err.Error())
+			continue
+		}
+		if count > 0 {
+			// Đã có hóa đơn (draft/unpaid/partial/paid) cho phòng này tháng
+			// này rồi (có thể do manager tự tạo tay trước hoặc cron chạy lại).
+			result.Skipped++
+			continue
+		}
+
+		var room models.Room
+		if err := roomsCol.FindOne(ctx, bson.M{"_id": contract.RoomID}).Decode(&room); err != nil {
+			result.Errors = append(result.Errors, "phòng "+contract.RoomCode+": "+err.Error())
+			continue
+		}
+		if len(room.TenantIDs) == 0 {
+			// Hợp đồng active nhưng phòng đang trống người ở (dữ liệu lệch) -> bỏ qua.
+			result.Skipped++
+			continue
+		}
+
+		electricOld, waterOld, err := resolveOldReadings(ctx, invoicesCol, contract.RoomID, nil, nil)
+		if err != nil {
+			result.Errors = append(result.Errors, "phòng "+contract.RoomCode+": "+err.Error())
+			continue
+		}
+
+		occupants := room.Occupants
+		if occupants <= 0 {
+			occupants = len(room.TenantIDs)
+		}
+		managementFeeAmount := float64(occupants) * room.ManagementFeePerPerson
+		totalAmount := contract.MonthlyRent + managementFeeAmount
+
+		invoiceID := primitive.NewObjectID()
+		tenantIDsSnapshot := make([]primitive.ObjectID, len(room.TenantIDs))
+		copy(tenantIDsSnapshot, room.TenantIDs)
+
+		now := time.Now()
+		invoice := models.Invoice{
+			ID:     invoiceID,
+			RoomID: contract.RoomID,
+
+			TenantID:  room.TenantIDs[0],
+			TenantIDs: tenantIDsSnapshot,
+
+			Month: month,
+			Year:  year,
+
+			RentAmount: contract.MonthlyRent,
+
+			ElectricOld:   electricOld,
+			ElectricNew:   electricOld, // chưa có chỉ số thật -> tạm để bằng chỉ số cũ (0 số tiêu thụ)
+			ElectricPrice: room.ElectricPrice,
+
+			WaterOld:   waterOld,
+			WaterNew:   waterOld,
+			WaterPrice: room.WaterPrice,
+
+			Occupants:              occupants,
+			ManagementFeePerPerson: room.ManagementFeePerPerson,
+			ManagementFeeAmount:    managementFeeAmount,
+
+			TotalAmount: totalAmount,
+			PaidAmount:  0,
+			Status:      models.InvoiceStatusDraft,
+
+			IsAutoGenerated: true,
+			PaymentRefCode:  utils.GenerateInvoiceRefCode(invoiceID),
+
+			// Due date tạm đặt 10 ngày sau ngày đầu tháng của kỳ hóa đơn; manager
+			// có thể chỉnh lại chính xác hơn khi xác nhận hóa đơn (ConfirmDraftInvoice).
+			DueDate:   time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 10),
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+
+		if _, err := invoicesCol.InsertOne(ctx, invoice); err != nil {
+			result.Errors = append(result.Errors, "phòng "+contract.RoomCode+": "+err.Error())
+			continue
+		}
+		result.Created++
+	}
+
+	return result, nil
+}
+
+type generateDraftInvoicesRequest struct {
+	// Month/Year: để trống -> dùng tháng/năm hiện tại. Chỉ cần truyền khi
+	// manager muốn tạo bù cho 1 tháng cụ thể khác tháng hiện tại.
+	Month int `json:"month"`
+	Year  int `json:"year"`
+}
+
+// GenerateDraftInvoices godoc
+// @Summary Tạo hóa đơn nháp cho toàn bộ phòng đang có hợp đồng active
+// @Description Manager chạy tay (hoặc để cron tự chạy đầu mỗi tháng) để tạo
+// @Description hóa đơn "draft" cho mọi phòng có hợp đồng active chưa có hóa
+// @Description đơn tháng này. Tiền phòng/phí quản lý đã tự suy ra sẵn, chỉ còn
+// @Description thiếu chỉ số điện/nước - dùng ConfirmDraftInvoice để hoàn tất.
+// @Tags Invoices
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body generateDraftInvoicesRequest false "Tháng/năm cần tạo (mặc định tháng hiện tại)"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/invoices/generate-draft [post]
+func (h *InvoiceHandler) GenerateDraftInvoices(c *gin.Context) {
+	var req generateDraftInvoicesRequest
+	_ = c.ShouldBindJSON(&req) // body rỗng cũng hợp lệ -> dùng tháng/năm hiện tại
+
+	now := time.Now()
+	month, year := req.Month, req.Year
+	if month == 0 {
+		month = int(now.Month())
+	}
+	if year == 0 {
+		year = now.Year()
+	}
+	if month < 1 || month > 12 {
+		utils.Error(c, http.StatusBadRequest, "Tháng không hợp lệ")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	result, err := GenerateMonthlyDraftInvoices(ctx, month, year)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Không thể tạo hóa đơn nháp, vui lòng thử lại")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Đã tạo hóa đơn nháp cho tháng "+strconv.Itoa(month)+"/"+strconv.Itoa(year), result)
+}
+
+type confirmDraftInvoiceRequest struct {
+	ElectricNew float64 `json:"electric_new" binding:"required"`
+	WaterNew    float64 `json:"water_new" binding:"required"`
+	OtherFees   float64 `json:"other_fees"`
+	OtherNote   string  `json:"other_note"`
+	Occupants   *int    `json:"occupants"`
+	DueDate     string  `json:"due_date"` // format: 2006-01-02, để trống giữ nguyên due_date tạm của bản nháp
+}
+
+// ConfirmDraftInvoice godoc
+// @Summary Xác nhận hóa đơn nháp (điền chỉ số điện/nước)
+// @Description Manager điền chỉ số điện/nước thật cho hóa đơn do cron tự động
+// @Description tạo (status=draft), hệ thống tính lại total_amount và chuyển
+// @Description hóa đơn sang "unpaid" - từ lúc này tenant mới thấy được hóa đơn.
+// @Tags Invoices
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Param request body confirmDraftInvoiceRequest true "Chỉ số điện/nước thật"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/invoices/{id}/confirm [put]
+func (h *InvoiceHandler) ConfirmDraftInvoice(c *gin.Context) {
+	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "ID không hợp lệ")
+		return
+	}
+
+	var req confirmDraftInvoiceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Error(c, http.StatusBadRequest, "Dữ liệu đầu vào không hợp lệ")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	invoicesCol := config.GetCollection("invoices")
+	var invoice models.Invoice
+	if err := invoicesCol.FindOne(ctx, bson.M{"_id": id}).Decode(&invoice); err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusNotFound, "Không tìm thấy hóa đơn")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	if invoice.Status != models.InvoiceStatusDraft {
+		utils.Error(c, http.StatusConflict, "Hóa đơn này không ở trạng thái nháp, không thể xác nhận")
+		return
+	}
+	if req.ElectricNew < invoice.ElectricOld {
+		utils.Error(c, http.StatusBadRequest, "Chỉ số điện mới không được nhỏ hơn chỉ số cũ")
+		return
+	}
+	if req.WaterNew < invoice.WaterOld {
+		utils.Error(c, http.StatusBadRequest, "Chỉ số nước mới không được nhỏ hơn chỉ số cũ")
+		return
+	}
+
+	roomsCol := config.GetCollection("rooms")
+	var room models.Room
+	if err := roomsCol.FindOne(ctx, bson.M{"_id": invoice.RoomID}).Decode(&room); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	occupants := invoice.Occupants
+	if req.Occupants != nil {
+		if *req.Occupants < 1 {
+			utils.Error(c, http.StatusBadRequest, "Occupants phải lớn hơn hoặc bằng 1")
+			return
+		}
+		if room.Capacity > 0 && *req.Occupants > room.Capacity {
+			utils.Error(c, http.StatusBadRequest, "Occupants không được vượt quá capacity của phòng")
+			return
+		}
+		occupants = *req.Occupants
+	}
+
+	dueDate := invoice.DueDate
+	if req.DueDate != "" {
+		parsed, err := time.Parse("2006-01-02", req.DueDate)
+		if err != nil {
+			utils.Error(c, http.StatusBadRequest, "due_date không hợp lệ, đúng format 2006-01-02")
+			return
+		}
+		dueDate = parsed
+	}
+
+	electricAmount := (req.ElectricNew - invoice.ElectricOld) * invoice.ElectricPrice
+	waterAmount := (req.WaterNew - invoice.WaterOld) * invoice.WaterPrice
+	managementFeeAmount := float64(occupants) * invoice.ManagementFeePerPerson
+	totalAmount := invoice.RentAmount + electricAmount + waterAmount + managementFeeAmount + req.OtherFees
+
+	update := bson.M{
+		"electric_new":          req.ElectricNew,
+		"electric_amount":       electricAmount,
+		"water_new":             req.WaterNew,
+		"water_amount":          waterAmount,
+		"other_fees":            req.OtherFees,
+		"other_note":            req.OtherNote,
+		"occupants":             occupants,
+		"management_fee_amount": managementFeeAmount,
+		"total_amount":          totalAmount,
+		"status":                models.InvoiceStatusUnpaid,
+		"due_date":              dueDate,
+		"updated_at":            time.Now(),
+	}
+
+	if _, err := invoicesCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": update}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Không thể xác nhận hóa đơn")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Xác nhận hóa đơn thành công", nil)
+}
+
+// ===================== Cron: đánh dấu hóa đơn quá hạn =====================
+
+// RunOverdueInvoiceCheck quét toàn bộ hóa đơn unpaid/partial có due_date đã
+// qua và gắn cờ overdue=true (để ListInvoices?status=overdue lọc ra được);
+// đồng thời gỡ cờ cho các hóa đơn không còn hợp lệ nữa (đã thanh toán đủ, bị
+// hủy, hoặc due_date vừa được sửa sang tương lai). Được gọi bởi
+// internal/scheduler (cron hàng ngày) hoặc endpoint chạy tay
+// /api/system/run-daily-jobs.
+func RunOverdueInvoiceCheck(ctx context.Context) (flagged int, unflagged int, err error) {
+	invoicesCol := config.GetCollection("invoices")
+	now := time.Now()
+
+	flagRes, err := invoicesCol.UpdateMany(ctx, bson.M{
+		"status":   bson.M{"$in": []models.InvoiceStatus{models.InvoiceStatusUnpaid, models.InvoiceStatusPartial}},
+		"due_date": bson.M{"$lt": now},
+		"overdue":  bson.M{"$ne": true},
+	}, bson.M{"$set": bson.M{"overdue": true, "updated_at": now}})
+	if err != nil {
+		return 0, 0, err
+	}
+
+	unflagRes, err := invoicesCol.UpdateMany(ctx, bson.M{
+		"overdue": true,
+		"$or": bson.A{
+			bson.M{"status": bson.M{"$in": []models.InvoiceStatus{models.InvoiceStatusPaid, models.InvoiceStatusCancelled, models.InvoiceStatusDraft}}},
+			bson.M{"due_date": bson.M{"$gte": now}},
+		},
+	}, bson.M{"$set": bson.M{"overdue": false, "updated_at": now}})
+	if err != nil {
+		return int(flagRes.ModifiedCount), 0, err
+	}
+
+	return int(flagRes.ModifiedCount), int(unflagRes.ModifiedCount), nil
 }

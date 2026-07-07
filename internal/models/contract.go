@@ -119,6 +119,11 @@ type Contract struct {
 	DepositRefunded float64       `bson:"deposit_refunded" json:"deposit_refunded"` // tổng đã hoàn trả
 	DepositStatus   DepositStatus `bson:"deposit_status" json:"deposit_status"`
 
+	// DepositRefCode: mã tham chiếu duy nhất dùng làm nội dung chuyển khoản khi
+	// tenant chuyển cọc qua ngân hàng, giúp webhook (SePay...) tự động đối soát
+	// và ghi nhận thu cọc mà không cần manager nhập tay CollectDeposit.
+	DepositRefCode string `bson:"deposit_ref_code,omitempty" json:"deposit_ref_code,omitempty"`
+
 	// ---- Thời hạn ----
 	StartDate time.Time `bson:"start_date" json:"start_date"` // ngày bắt đầu hiệu lực / checkin
 	EndDate   time.Time `bson:"end_date" json:"end_date"`     // ngày hết hạn dự kiến (có thể gia hạn)
@@ -135,6 +140,10 @@ type Contract struct {
 	TerminationReason string `bson:"termination_reason,omitempty" json:"termination_reason,omitempty"`
 
 	Note string `bson:"note,omitempty" json:"note,omitempty"`
+
+	// ExpiryReminderSentAt: thời điểm cron nhắc gia hạn đã xử lý hợp đồng này
+	// gần nhất (tránh nhắc lặp lại mỗi ngày trong cùng 1 lần end_date sắp tới).
+	ExpiryReminderSentAt *time.Time `bson:"expiry_reminder_sent_at,omitempty" json:"expiry_reminder_sent_at,omitempty"`
 
 	CreatedBy primitive.ObjectID `bson:"created_by" json:"created_by"` // manager tạo hợp đồng
 	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
@@ -176,6 +185,14 @@ type DepositTransaction struct {
 	Note   string        `bson:"note,omitempty" json:"note,omitempty"`
 
 	ConfirmedBy primitive.ObjectID `bson:"confirmed_by" json:"confirmed_by"` // manager thực hiện giao dịch
+
+	// IsAutoConfirmed: true nếu giao dịch cọc này được hệ thống tự động ghi
+	// nhận qua webhook (SePay...), false nếu do manager tự tay ghi nhận.
+	IsAutoConfirmed bool `bson:"is_auto_confirmed,omitempty" json:"is_auto_confirmed,omitempty"`
+
+	// ExternalTransactionID: ID giao dịch phía nhà cung cấp webhook (SePay...),
+	// dùng để chống xử lý trùng khi webhook bị gửi lại (retry). Sparse unique.
+	ExternalTransactionID string `bson:"external_transaction_id,omitempty" json:"external_transaction_id,omitempty"`
 
 	CreatedAt time.Time `bson:"created_at" json:"created_at"`
 }

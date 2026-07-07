@@ -112,12 +112,29 @@ func ensureIndexes(ctx context.Context) {
 		log.Println("Cảnh báo tạo index contracts.tenant_ids:", err)
 	}
 
+	// Sparse: chỉ áp dụng cho hợp đồng đã có deposit_ref_code (backfill dần cho
+	// hợp đồng cũ), dùng để webhook SePay đối soát tự động giao dịch thu cọc.
+	_, err = contractsCol.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    map[string]interface{}{"deposit_ref_code": 1},
+		Options: options.Index().SetUnique(true).SetSparse(true),
+	})
+	if err != nil {
+		log.Println("Cảnh báo tạo index contracts.deposit_ref_code:", err)
+	}
+
 	depositTxCol := DB.Collection("deposit_transactions")
 	_, err = depositTxCol.Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys: map[string]interface{}{"contract_id": 1},
 	})
 	if err != nil {
 		log.Println("Cảnh báo tạo index deposit_transactions.contract_id:", err)
+	}
+	_, err = depositTxCol.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    map[string]interface{}{"external_transaction_id": 1},
+		Options: options.Index().SetUnique(true).SetSparse(true),
+	})
+	if err != nil {
+		log.Println("Cảnh báo tạo index deposit_transactions.external_transaction_id:", err)
 	}
 }
 

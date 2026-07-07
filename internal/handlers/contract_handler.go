@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -259,8 +261,9 @@ func (h *ContractHandler) CreateContract(c *gin.Context) {
 	}
 
 	now := time.Now()
+	contractID := primitive.NewObjectID()
 	contract := models.Contract{
-		ID:              primitive.NewObjectID(),
+		ID:              contractID,
 		RoomID:          roomID,
 		RoomCode:        room.Code,
 		TenantIDs:       tenantIDs,
@@ -269,6 +272,7 @@ func (h *ContractHandler) CreateContract(c *gin.Context) {
 		DepositPaid:     0,
 		DepositRefunded: 0,
 		DepositStatus:   models.DepositStatusUnpaid,
+		DepositRefCode:  utils.GenerateDepositRefCode(contractID),
 		StartDate:       startDate,
 		EndDate:         endDate,
 		Status:          models.ContractStatusActive,
@@ -389,6 +393,15 @@ func (h *ContractHandler) ListContracts(c *gin.Context) {
 			return
 		}
 		filter["status"] = status
+	}
+
+	// expiring_soon=true: chỉ lấy hợp đồng active có end_date trong vòng 15
+	// ngày tới (kể cả đã trễ tới hôm nay), để manager biết sớm mà nhắc gia hạn
+	// hoặc chuẩn bị checkout. Không tự động đổi status - hợp đồng vẫn "active"
+	// cho tới khi manager thao tác checkout/extend.
+	if c.Query("expiring_soon") == "true" {
+		filter["status"] = models.ContractStatusActive
+		filter["end_date"] = bson.M{"$lte": time.Now().AddDate(0, 0, 15)}
 	}
 
 	cursor, err := contractsCol.Find(ctx, filter, options_findSortByCreatedDesc())
@@ -617,8 +630,9 @@ func (h *ContractHandler) ExtendContract(c *gin.Context) {
 	}
 
 	if _, err := contractsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
-		"$set":  update,
-		"$push": bson.M{"renewals": renewal},
+		"$set":   update,
+		"$push":  bson.M{"renewals": renewal},
+		"$unset": bson.M{"expiry_reminder_sent_at": ""},
 	}); err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Không thể gia hạn hợp đồng, vui lòng thử lại")
 		return
@@ -686,45 +700,15 @@ func (h *ContractHandler) CollectDeposit(c *gin.Context) {
 		return
 	}
 
-	// Chặn thu cọc vượt quá deposit_amount đã thỏa thuận trong hợp đồng, nhất
-	// quán với cách CreatePayment chặn thanh toán vượt quá số tiền còn lại của
-	// hóa đơn. Nếu thực sự cần thu thêm cọc (đổi thỏa thuận), manager phải sửa
-	// deposit_amount trước (chỉ sửa được khi chưa thu đồng nào - xem UpdateContract).
-	if contract.DepositPaid+req.Amount > contract.DepositAmount {
-		utils.Error(c, http.StatusBadRequest, "Số tiền thu vượt quá số tiền cọc đã thỏa thuận trong hợp đồng")
-		return
-	}
-
-	now := time.Now()
-	managerID := mustObjectIDFromCtx(c)
-
-	tx := models.DepositTransaction{
-		ID:          primitive.NewObjectID(),
-		ContractID:  contract.ID,
-		RoomID:      contract.RoomID,
-		Type:        models.DepositTxCollect,
-		Amount:      req.Amount,
-		Method:      req.Method,
-		Note:        req.Note,
-		ConfirmedBy: managerID,
-		CreatedAt:   now,
-	}
-	if _, err := depositTxCol.InsertOne(ctx, tx); err != nil {
+	newDepositPaid, newStatus, txID, err := collectDepositForContract(
+		ctx, contractsCol, depositTxCol, contract, req.Amount, req.Method, req.Note, mustObjectIDFromCtx(c), false, "",
+	)
+	if err != nil {
+		if err == ErrDepositExceedsAgreed {
+			utils.Error(c, http.StatusBadRequest, "Số tiền thu vượt quá số tiền cọc đã thỏa thuận trong hợp đồng")
+			return
+		}
 		utils.Error(c, http.StatusInternalServerError, "Không thể ghi nhận thu cọc, vui lòng thử lại")
-		return
-	}
-
-	newDepositPaid := contract.DepositPaid + req.Amount
-	newStatus := resolveDepositStatusAfterCollect(contract.DepositAmount, newDepositPaid)
-
-	if _, err := contractsCol.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
-		"$set": bson.M{
-			"deposit_paid":   newDepositPaid,
-			"deposit_status": newStatus,
-			"updated_at":     now,
-		},
-	}); err != nil {
-		utils.Error(c, http.StatusInternalServerError, "Đã ghi nhận khoản thu nhưng cập nhật hợp đồng thất bại, vui lòng kiểm tra lại")
 		return
 	}
 
@@ -732,8 +716,81 @@ func (h *ContractHandler) CollectDeposit(c *gin.Context) {
 		"contract_id":    id,
 		"deposit_paid":   newDepositPaid,
 		"deposit_status": newStatus,
-		"transaction_id": tx.ID,
+		"transaction_id": txID,
 	})
+}
+
+// ===================== Logic dùng chung: thu cọc =====================
+
+// ErrDepositExceedsAgreed trả về khi số tiền thu cọc (cộng dồn) vượt quá
+// deposit_amount đã thỏa thuận trong hợp đồng.
+var ErrDepositExceedsAgreed = errors.New("deposit amount exceeds agreed amount")
+
+// collectDepositForContract ghi nhận 1 lần thu cọc cho hợp đồng: tạo
+// DepositTransaction + cập nhật deposit_paid/deposit_status của contract.
+// Dùng chung cho cả CollectDeposit (manager nhập tay) và SepayWebhook (tự
+// động nhận diện giao dịch chuyển khoản cọc qua deposit_ref_code).
+//
+// isAutoConfirmed=true kèm externalTxnID dùng cho trường hợp webhook tự động
+// ghi nhận (confirmedBy sẽ là NilObjectID, note sẽ có tiền tố phù hợp).
+func collectDepositForContract(
+	ctx context.Context,
+	contractsCol, depositTxCol *mongo.Collection,
+	contract models.Contract,
+	amount float64,
+	method models.PaymentMethod,
+	note string,
+	confirmedBy primitive.ObjectID,
+	isAutoConfirmed bool,
+	externalTxnID string,
+) (newDepositPaid float64, newStatus models.DepositStatus, txID primitive.ObjectID, err error) {
+	// Nếu thu vượt quá số cọc thỏa thuận: với thu tay thì chặn hẳn (manager
+	// phải sửa deposit_amount trước); với webhook tự động thì VẪN lưu lại giao
+	// dịch để không mất dấu vết dòng tiền, nhưng chỉ cộng dồn tối đa tới đúng
+	// deposit_amount (phần dư coi như tenant chuyển thừa, manager tự xử lý tay).
+	cappedAmount := amount
+	if contract.DepositPaid+amount > contract.DepositAmount {
+		if !isAutoConfirmed {
+			return 0, "", primitive.NilObjectID, ErrDepositExceedsAgreed
+		}
+		cappedAmount = contract.DepositAmount - contract.DepositPaid
+		if cappedAmount < 0 {
+			cappedAmount = 0
+		}
+	}
+
+	now := time.Now()
+	tx := models.DepositTransaction{
+		ID:                    primitive.NewObjectID(),
+		ContractID:            contract.ID,
+		RoomID:                contract.RoomID,
+		Type:                  models.DepositTxCollect,
+		Amount:                amount, // lưu đúng số tiền thực chuyển để không mất dấu vết dòng tiền
+		Method:                method,
+		Note:                  note,
+		ConfirmedBy:           confirmedBy,
+		IsAutoConfirmed:       isAutoConfirmed,
+		ExternalTransactionID: externalTxnID,
+		CreatedAt:             now,
+	}
+	if _, err := depositTxCol.InsertOne(ctx, tx); err != nil {
+		return 0, "", primitive.NilObjectID, err
+	}
+
+	newDepositPaid = contract.DepositPaid + cappedAmount
+	newStatus = resolveDepositStatusAfterCollect(contract.DepositAmount, newDepositPaid)
+
+	if _, err := contractsCol.UpdateOne(ctx, bson.M{"_id": contract.ID}, bson.M{
+		"$set": bson.M{
+			"deposit_paid":   newDepositPaid,
+			"deposit_status": newStatus,
+			"updated_at":     now,
+		},
+	}); err != nil {
+		return 0, "", primitive.NilObjectID, err
+	}
+
+	return newDepositPaid, newStatus, tx.ID, nil
 }
 
 // ===================== Checkout / Chấm dứt hợp đồng =====================
@@ -1274,4 +1331,57 @@ func (h *ContractHandler) ListDepositTransactions(c *gin.Context) {
 	}
 
 	utils.Success(c, http.StatusOK, "Lấy lịch sử giao dịch cọc thành công", txs)
+}
+
+// ===================== Cron: nhắc hợp đồng sắp hết hạn =====================
+
+// RunContractExpiryCheck quét toàn bộ hợp đồng "active" có end_date còn trong
+// khoảng 7-15 ngày tới, đánh dấu expiry_reminder_sent_at (chỉ nhắc 1 lần cho
+// mỗi hợp đồng trong cửa sổ này, tránh log/nhắc lặp lại mỗi ngày).
+// Được gọi bởi internal/scheduler (cron hàng ngày) hoặc endpoint chạy tay
+// /api/system/run-daily-jobs.
+//
+// Hiện tại hệ thống CHƯA có kênh gửi email/SMS, nên bước "nhắc" ở đây là log
+// lại + đánh dấu để FE có thể query (GET /api/contracts?expiring_soon=true)
+// hiển thị badge nhắc nhở cho manager. Khi có kênh thông báo, chỉ cần cắm
+// thêm bước gửi vào ngay dưới log.Printf.
+func RunContractExpiryCheck(ctx context.Context) (reminded int, err error) {
+	contractsCol := config.GetCollection("contracts")
+
+	now := time.Now()
+	windowStart := now.AddDate(0, 0, 7)
+	windowEnd := now.AddDate(0, 0, 15)
+
+	cursor, err := contractsCol.Find(ctx, bson.M{
+		"status": models.ContractStatusActive,
+		"end_date": bson.M{
+			"$gte": windowStart,
+			"$lte": windowEnd,
+		},
+		"expiry_reminder_sent_at": bson.M{"$exists": false},
+	})
+	if err != nil {
+		return 0, err
+	}
+	defer cursor.Close(ctx)
+
+	var contracts []models.Contract
+	if err := cursor.All(ctx, &contracts); err != nil {
+		return 0, err
+	}
+
+	for _, ct := range contracts {
+		log.Printf("⏰ Hợp đồng %s (phòng %s) sắp hết hạn vào %s - cần nhắc gia hạn/checkout\n",
+			ct.ID.Hex(), ct.RoomCode, ct.EndDate.Format("2006-01-02"))
+
+		if _, err := contractsCol.UpdateOne(ctx, bson.M{"_id": ct.ID}, bson.M{
+			"$set": bson.M{"expiry_reminder_sent_at": now},
+		}); err != nil {
+			log.Printf("❌ Không thể đánh dấu đã nhắc hợp đồng %s: %v\n", ct.ID.Hex(), err)
+			continue
+		}
+		reminded++
+	}
+
+	return reminded, nil
 }

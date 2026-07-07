@@ -13,6 +13,11 @@ import (
 // dùng để bóc tách từ nội dung chuyển khoản do webhook SePay gửi về.
 var invoiceRefCodePattern = regexp.MustCompile(`(?i)HD[0-9A-F]{8}`)
 
+// depositRefCodePattern nhận diện mã tham chiếu tiền cọc dạng "CK" + 8 ký tự hex
+// (CK = "cọc"), tương tự invoiceRefCodePattern nhưng dùng riêng cho cọc để
+// webhook phân biệt được đây là giao dịch thu cọc, không phải thanh toán hóa đơn.
+var depositRefCodePattern = regexp.MustCompile(`(?i)CK[0-9A-F]{8}`)
+
 // GenerateInvoiceRefCode sinh mã tham chiếu ngắn, duy nhất cho 1 hóa đơn, dùng làm
 // nội dung chuyển khoản để đối soát tự động khi có webhook báo tiền về (SePay/Casso...).
 // Dạng: "HD" + 8 ký tự hex cuối của ObjectID, in hoa. Vd: "HDA1B2C3D4"... (thực tế 8 ký tự).
@@ -27,6 +32,26 @@ func GenerateInvoiceRefCode(id primitive.ObjectID) string {
 // nếu tìm thấy, ngược lại trả về "" và false.
 func ExtractInvoiceRefCode(text string) (string, bool) {
 	match := invoiceRefCodePattern.FindString(text)
+	if match == "" {
+		return "", false
+	}
+	return strings.ToUpper(match), true
+}
+
+// GenerateDepositRefCode sinh mã tham chiếu ngắn, duy nhất cho tiền cọc của 1
+// hợp đồng, dùng làm nội dung chuyển khoản để webhook tự động nhận diện đây là
+// giao dịch thu cọc (khác với thanh toán hóa đơn) và đối soát về đúng hợp đồng.
+// Dạng: "CK" + 8 ký tự hex cuối của ObjectID, in hoa.
+func GenerateDepositRefCode(id primitive.ObjectID) string {
+	hex := id.Hex()
+	suffix := hex[len(hex)-8:]
+	return "CK" + strings.ToUpper(suffix)
+}
+
+// ExtractDepositRefCode bóc tách mã tham chiếu cọc (nếu có) từ nội dung/diễn
+// giải giao dịch ngân hàng. Trả về mã đã chuẩn hóa IN HOA và true nếu tìm thấy.
+func ExtractDepositRefCode(text string) (string, bool) {
+	match := depositRefCodePattern.FindString(text)
 	if match == "" {
 		return "", false
 	}

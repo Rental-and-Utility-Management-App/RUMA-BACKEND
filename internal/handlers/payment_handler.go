@@ -77,6 +77,10 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		utils.Error(c, http.StatusConflict, "Hóa đơn này đã bị hủy, không thể ghi nhận thanh toán")
 		return
 	}
+	if invoice.Status == models.InvoiceStatusDraft {
+		utils.Error(c, http.StatusConflict, "Hóa đơn này còn ở dạng nháp, cần xác nhận chỉ số điện/nước trước (PUT /api/invoices/:id/confirm)")
+		return
+	}
 	if invoice.Status == models.InvoiceStatusPaid {
 		utils.Error(c, http.StatusConflict, "Hóa đơn này đã được thanh toán đầy đủ")
 		return
@@ -286,14 +290,28 @@ func (h *PaymentHandler) SepayWebhook(c *gin.Context) {
 		return
 	}
 
+	depositTxCol := config.GetCollection("deposit_transactions")
+	var existingDepositTx models.DepositTransaction
+	err = depositTxCol.FindOne(ctx, bson.M{"external_transaction_id": externalTxnID}).Decode(&existingDepositTx)
+	if err == nil {
+		// Giao dịch cọc này cũng đã xử lý từ trước -> báo thành công, không làm lại.
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+	if err != mongo.ErrNoDocuments {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false})
+		return
+	}
+
 	// --- Đối soát: tìm mã tham chiếu hóa đơn trong nội dung giao dịch ---
 	refCode, found := utils.ExtractInvoiceRefCode(payload.Content)
 	if !found {
 		refCode, found = utils.ExtractInvoiceRefCode(payload.Description)
 	}
 	if !found {
-		log.Printf("ℹ️  Webhook SePay: không tìm thấy mã hóa đơn trong nội dung \"%s\" (giao dịch id=%d)\n", payload.Content, payload.ID)
-		c.JSON(http.StatusOK, gin.H{"success": true})
+		// Không phải giao dịch thanh toán hóa đơn -> thử xem có phải chuyển
+		// khoản THU CỌC hay không (nội dung chứa mã dạng "CK" + 8 ký tự hex).
+		h.handleSepayDepositTransfer(c, ctx, depositTxCol, payload, externalTxnID)
 		return
 	}
 
@@ -313,6 +331,13 @@ func (h *PaymentHandler) SepayWebhook(c *gin.Context) {
 		// Hóa đơn đã đủ tiền từ trước (vd: manager lỡ ghi nhận tay) -> vẫn lưu lại
 		// giao dịch để không mất dấu vết dòng tiền, nhưng không cộng dồn thêm vào invoice.
 		log.Printf("ℹ️  Webhook SePay: hóa đơn %s đã thanh toán đủ, chỉ lưu lại giao dịch để đối soát\n", refCode)
+	}
+	if invoice.Status == models.InvoiceStatusDraft {
+		// Hóa đơn còn ở dạng nháp (chưa có chỉ số điện/nước thật -> total_amount
+		// chưa chính xác) - vẫn lưu lại giao dịch để không mất dấu vết dòng tiền,
+		// nhưng KHÔNG cộng vào paid_amount lúc này. Manager cần xác nhận hóa đơn
+		// (ConfirmDraftInvoice) rồi tự đối chiếu/ghi nhận khoản này thủ công.
+		log.Printf("⚠️  Webhook SePay: hóa đơn %s còn ở dạng nháp, chỉ lưu giao dịch để đối soát thủ công\n", refCode)
 	}
 
 	payment := models.Payment{
@@ -342,7 +367,7 @@ func (h *PaymentHandler) SepayWebhook(c *gin.Context) {
 		return
 	}
 
-	if invoice.Status != models.InvoiceStatusPaid {
+	if invoice.Status != models.InvoiceStatusPaid && invoice.Status != models.InvoiceStatusDraft {
 		newPaidAmount := invoice.PaidAmount + payload.TransferAmount
 		newStatus := models.InvoiceStatusPartial
 		if newPaidAmount >= invoice.TotalAmount {
@@ -596,4 +621,66 @@ func (h *PaymentHandler) DeletePayment(c *gin.Context) {
 // formatSepayTxnID chuẩn hóa transaction id của SePay thành string để lưu/so khớp.
 func formatSepayTxnID(id int64) string {
 	return "sepay_" + strconv.FormatInt(id, 10)
+}
+
+// handleSepayDepositTransfer xử lý trường hợp giao dịch chuyển khoản KHÔNG
+// khớp mã hóa đơn (HD...) - thử tìm mã tham chiếu cọc (CK...) trong nội
+// dung/diễn giải, đối soát về đúng hợp đồng và tự động ghi nhận thu cọc,
+// đỡ cho manager phải tự tay CollectDeposit khi tenant chuyển khoản tiền cọc.
+// Luôn trả 200 cho SePay (trừ lỗi hệ thống thật) để tránh bị retry vô ích.
+func (h *PaymentHandler) handleSepayDepositTransfer(
+	c *gin.Context,
+	ctx context.Context,
+	depositTxCol *mongo.Collection,
+	payload sepayWebhookPayload,
+	externalTxnID string,
+) {
+	refCode, found := utils.ExtractDepositRefCode(payload.Content)
+	if !found {
+		refCode, found = utils.ExtractDepositRefCode(payload.Description)
+	}
+	if !found {
+		log.Printf("ℹ️  Webhook SePay: không tìm thấy mã hóa đơn/mã cọc trong nội dung \"%s\" (giao dịch id=%d)\n", payload.Content, payload.ID)
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+
+	contractsCol := config.GetCollection("contracts")
+	var contract models.Contract
+	if err := contractsCol.FindOne(ctx, bson.M{"deposit_ref_code": refCode}).Decode(&contract); err != nil {
+		if err == mongo.ErrNoDocuments {
+			log.Printf("ℹ️  Webhook SePay: không tìm thấy hợp đồng với mã cọc %s (giao dịch id=%d)\n", refCode, payload.ID)
+			c.JSON(http.StatusOK, gin.H{"success": true})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false})
+		return
+	}
+
+	if contract.Status != models.ContractStatusActive {
+		log.Printf("ℹ️  Webhook SePay: hợp đồng %s (mã cọc %s) không còn hiệu lực, chỉ ghi log không xử lý\n", contract.ID.Hex(), refCode)
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+	if contract.DepositPaid >= contract.DepositAmount {
+		log.Printf("ℹ️  Webhook SePay: hợp đồng %s đã thu đủ cọc từ trước, chỉ lưu lại giao dịch để đối soát\n", contract.ID.Hex())
+	}
+
+	note := "Tự động xác nhận thu cọc qua SePay - GD " + payload.ReferenceCode
+	_, _, _, err := collectDepositForContract(
+		ctx, contractsCol, depositTxCol, contract, payload.TransferAmount,
+		models.PaymentMethodTransfer, note, primitive.NilObjectID, true, externalTxnID,
+	)
+	if err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			c.JSON(http.StatusOK, gin.H{"success": true})
+			return
+		}
+		log.Printf("❌ Webhook SePay: lỗi ghi nhận thu cọc cho hợp đồng %s: %v\n", contract.ID.Hex(), err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false})
+		return
+	}
+
+	log.Printf("✅ Webhook SePay: tự động ghi nhận thu cọc %.0f cho hợp đồng %s\n", payload.TransferAmount, contract.ID.Hex())
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }

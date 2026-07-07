@@ -47,6 +47,8 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 	invoiceHandler := handlers.NewInvoiceHandler(cfg)
 	paymentHandler := handlers.NewPaymentHandler(cfg)
 	contractHandler := handlers.NewContractHandler()
+	reportHandler := handlers.NewReportHandler()
+	systemHandler := handlers.NewSystemHandler()
 
 	// Rate limit riêng cho login: tối đa 5 lần thử/phút theo từng IP, chống brute-force.
 	loginLimiter := middleware.NewRateLimiter(5, time.Minute)
@@ -114,6 +116,8 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 				invoicesManagerOnly.POST("", invoiceHandler.CreateInvoice)
 				invoicesManagerOnly.PUT("/:id", invoiceHandler.UpdateInvoice)
 				invoicesManagerOnly.POST("/:id/cancel", invoiceHandler.CancelInvoice)
+				invoicesManagerOnly.PUT("/:id/confirm", invoiceHandler.ConfirmDraftInvoice)
+				invoicesManagerOnly.POST("/generate-draft", invoiceHandler.GenerateDraftInvoices)
 			}
 		}
 
@@ -150,6 +154,20 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 				paymentsManagerOnly.PUT("/:id", paymentHandler.UpdatePayment)
 				paymentsManagerOnly.DELETE("/:id", paymentHandler.DeletePayment)
 			}
+		}
+
+		// Reports - chỉ manager xem báo cáo tổng hợp (doanh thu/lấp đầy/công nợ)
+		reports := protected.Group("/reports")
+		reports.Use(middleware.RequireRole(string(models.RoleManager)))
+		{
+			reports.GET("/summary", reportHandler.GetSummary)
+		}
+
+		// System - tiện ích vận hành nội bộ, chỉ manager (chạy tay cron job để test/xử lý gấp)
+		system := protected.Group("/system")
+		system.Use(middleware.RequireRole(string(models.RoleManager)))
+		{
+			system.POST("/run-daily-jobs", systemHandler.RunDailyJobs)
 		}
 	}
 }
