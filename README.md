@@ -21,6 +21,10 @@ Payment: lịch sử thanh toán gắn với invoice
 go run cmd/server/main.go
 http://localhost:8080/swagger/index.html
 
+# Update swagger
+
+swag init -g cmd/server/main.go
+
 # Run bằng Docker (khuyến nghị - tự kèm MongoDB)
 
 docker compose up --build
