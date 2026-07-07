@@ -30,10 +30,22 @@ func NewInvoiceHandler(cfg *config.Config) *InvoiceHandler {
 //   - Nếu người dùng tự nhập (khác nil) -> dùng giá trị đó (ghi đè, vd: mới thay đồng hồ).
 //   - Nếu để trống -> lấy electric_new/water_new của hóa đơn gần nhất cùng phòng.
 //   - Nếu phòng chưa từng có hóa đơn nào -> mặc định 0 (hóa đơn đầu tiên).
+//
+// resolveOldReadings tự suy ra chỉ số điện/nước "cũ" cho 1 hóa đơn mới, dựa
+// trên hóa đơn gần nhất của phòng ở KỲ TRƯỚC ĐÓ (theo targetMonth/targetYear),
+// nếu người dùng không tự nhập (electricOldOverride/waterOldOverride == nil).
+//
+// Chỉ xét các hóa đơn thực sự ở kỳ trước target (year/month nhỏ hơn), không
+// lấy nhầm hóa đơn của kỳ SAU - vd: đã có hóa đơn tháng 7 (điện=100) rồi mới
+// tạo bù hóa đơn tháng 6, thì không được lấy chỉ số tháng 7 làm "chỉ số cũ"
+// cho tháng 6 vì sai chiều thời gian. Cũng bỏ qua hóa đơn "draft" (điện/nước
+// lúc này chỉ là placeholder = chỉ số cũ, chưa phải chỉ số thật) và
+// "cancelled" (không đáng tin cậy) khi tìm hóa đơn tham chiếu.
 func resolveOldReadings(
 	ctx context.Context,
 	invoicesCol *mongo.Collection,
 	roomID primitive.ObjectID,
+	targetMonth, targetYear int,
 	electricOldOverride *float64,
 	waterOldOverride *float64,
 ) (electricOld float64, waterOld float64, err error) {
@@ -51,13 +63,20 @@ func resolveOldReadings(
 	var lastInvoice models.Invoice
 	findErr := invoicesCol.FindOne(
 		ctx,
-		bson.M{"room_id": roomID},
+		bson.M{
+			"room_id": roomID,
+			"status":  bson.M{"$nin": []models.InvoiceStatus{models.InvoiceStatusDraft, models.InvoiceStatusCancelled}},
+			"$or": bson.A{
+				bson.M{"year": bson.M{"$lt": targetYear}},
+				bson.M{"year": targetYear, "month": bson.M{"$lt": targetMonth}},
+			},
+		},
 		options.FindOne().SetSort(bson.D{{Key: "year", Value: -1}, {Key: "month", Value: -1}}),
 	).Decode(&lastInvoice)
 
 	if findErr != nil {
 		if findErr == mongo.ErrNoDocuments {
-			// Phòng chưa có hóa đơn nào trước đó -> giữ mặc định 0 cho phần chưa override.
+			// Phòng chưa có hóa đơn hợp lệ nào ở kỳ trước đó -> giữ mặc định 0 cho phần chưa override.
 			return electricOld, waterOld, nil
 		}
 		return 0, 0, findErr
@@ -163,8 +182,32 @@ func (h *InvoiceHandler) CreateInvoice(c *gin.Context) {
 		return
 	}
 
+	// Chặn tạo hóa đơn cho 1 kỳ mà phòng này ĐÃ có hóa đơn (khác cancelled) ở
+	// kỳ SAU đó. Lý do: electric_old/water_old của hóa đơn kỳ sau đã "chốt" tại
+	// thời điểm tạo (dựa vào hóa đơn gần nhất lúc đó); nếu giờ mới tạo bù 1 kỳ
+	// xen giữa (hoặc trước đó) với chỉ số thật, hóa đơn kỳ sau sẽ tính sai tiền
+	// điện/nước mà hệ thống không tự phát hiện được. Muốn tạo bù, manager phải
+	// hủy hóa đơn kỳ sau trước (chỉ hủy được nếu chưa thu tiền), tạo kỳ đang
+	// thiếu, rồi tạo lại kỳ sau.
+	laterCount, err := invoicesCol.CountDocuments(ctx, bson.M{
+		"room_id": roomID,
+		"status":  bson.M{"$ne": models.InvoiceStatusCancelled},
+		"$or": bson.A{
+			bson.M{"year": bson.M{"$gt": req.Year}},
+			bson.M{"year": req.Year, "month": bson.M{"$gt": req.Month}},
+		},
+	})
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if laterCount > 0 {
+		utils.Error(c, http.StatusConflict, "Phòng này đã có hóa đơn ở tháng sau, không thể tạo hóa đơn cho tháng trước đó (có thể làm sai lệch chỉ số điện/nước đã tính). Vui lòng hủy hóa đơn tháng sau trước nếu muốn tạo bù.")
+		return
+	}
+
 	// Tự động lấy chỉ số cũ từ hóa đơn gần nhất của phòng (nếu người dùng không tự nhập).
-	electricOld, waterOld, err := resolveOldReadings(ctx, invoicesCol, roomID, req.ElectricOld, req.WaterOld)
+	electricOld, waterOld, err := resolveOldReadings(ctx, invoicesCol, roomID, req.Month, req.Year, req.ElectricOld, req.WaterOld)
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
 		return
@@ -761,6 +804,28 @@ func GenerateMonthlyDraftInvoices(ctx context.Context, month, year int) (*Genera
 			continue
 		}
 
+		// Bỏ qua nếu phòng này đã có hóa đơn (khác cancelled) ở kỳ SAU kỳ đang
+		// tạo - tránh làm sai lệch electric_old/water_old đã "chốt" trong hóa
+		// đơn kỳ sau đó (xem giải thích chi tiết ở CreateInvoice). Trường hợp
+		// này hiếm khi xảy ra với cron chạy đúng lịch, chủ yếu gặp khi tạo bù
+		// thủ công qua POST /api/invoices/generate-draft cho 1 tháng trong quá khứ.
+		laterCount, err := invoicesCol.CountDocuments(ctx, bson.M{
+			"room_id": contract.RoomID,
+			"status":  bson.M{"$ne": models.InvoiceStatusCancelled},
+			"$or": bson.A{
+				bson.M{"year": bson.M{"$gt": year}},
+				bson.M{"year": year, "month": bson.M{"$gt": month}},
+			},
+		})
+		if err != nil {
+			result.Errors = append(result.Errors, "phòng "+contract.RoomCode+": "+err.Error())
+			continue
+		}
+		if laterCount > 0 {
+			result.Skipped++
+			continue
+		}
+
 		var room models.Room
 		if err := roomsCol.FindOne(ctx, bson.M{"_id": contract.RoomID}).Decode(&room); err != nil {
 			result.Errors = append(result.Errors, "phòng "+contract.RoomCode+": "+err.Error())
@@ -772,7 +837,7 @@ func GenerateMonthlyDraftInvoices(ctx context.Context, month, year int) (*Genera
 			continue
 		}
 
-		electricOld, waterOld, err := resolveOldReadings(ctx, invoicesCol, contract.RoomID, nil, nil)
+		electricOld, waterOld, err := resolveOldReadings(ctx, invoicesCol, contract.RoomID, month, year, nil, nil)
 		if err != nil {
 			result.Errors = append(result.Errors, "phòng "+contract.RoomCode+": "+err.Error())
 			continue
