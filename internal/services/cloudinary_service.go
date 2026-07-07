@@ -152,6 +152,88 @@ func (s *CloudinaryService) UploadAvatar(fileReader io.Reader, filename string, 
 	return &result, nil
 }
 
+// UploadImage upload 1 ảnh bất kỳ (không gắn với user cụ thể) vào một folder trên
+// Cloudinary, để Cloudinary tự sinh public_id ngẫu nhiên (không overwrite, không
+// trùng nhau giữa các lần upload). Dùng cho các trường hợp chung: ảnh phòng, ảnh
+// đính kèm hợp đồng, ảnh hóa đơn... chỉ cần lấy imageUrl để lưu vào field tương ứng.
+func (s *CloudinaryService) UploadImage(fileReader io.Reader, filename string, folder string) (*UploadResult, error) {
+	if !s.IsConfigured() {
+		return nil, errors.New("Cloudinary chưa được cấu hình (thiếu CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET)")
+	}
+
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+
+	signParams := map[string]string{
+		"folder":    folder,
+		"timestamp": timestamp,
+	}
+	signature := s.sign(signParams)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	fileWriter, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(fileWriter, fileReader); err != nil {
+		return nil, err
+	}
+
+	fields := map[string]string{
+		"api_key":   s.apiKey,
+		"timestamp": timestamp,
+		"folder":    folder,
+		"signature": signature,
+	}
+	for k, v := range fields {
+		if err := writer.WriteField(k, v); err != nil {
+			return nil, err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+
+	uploadURL := fmt.Sprintf("https://api.cloudinary.com/v1_1/%s/image/upload", s.cloudName)
+	req, err := http.NewRequest(http.MethodPost, uploadURL, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var cloudErr struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		_ = json.Unmarshal(respBody, &cloudErr)
+		if cloudErr.Error.Message != "" {
+			return nil, fmt.Errorf("Cloudinary upload thất bại: %s", cloudErr.Error.Message)
+		}
+		return nil, fmt.Errorf("Cloudinary upload thất bại (status %d)", resp.StatusCode)
+	}
+
+	var result UploadResult
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
 // DeleteImage xóa ảnh trên Cloudinary theo public_id (dùng khi user gỡ avatar
 // hoàn toàn, không thay bằng ảnh mới). Lỗi ở đây không coi là nghiêm trọng -
 // caller có thể log và bỏ qua nếu muốn, vì ảnh mồ côi trên Cloudinary không

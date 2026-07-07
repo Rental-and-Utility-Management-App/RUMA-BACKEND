@@ -46,6 +46,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 
 	authHandler := handlers.NewAuthHandler(cfg)
 	userHandler := handlers.NewUserHandler(cloudinaryService)
+	uploadHandler := handlers.NewUploadHandler(cloudinaryService)
 	roomHandler := handlers.NewRoomHandler()
 	invoiceHandler := handlers.NewInvoiceHandler(cfg)
 	paymentHandler := handlers.NewPaymentHandler(cfg)
@@ -82,6 +83,10 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 		// (đặt ngoài group /users vì group đó chỉ dành cho Manager quản lý tenant khác).
 		protected.POST("/users/me/avatar", userHandler.UploadAvatar)
 		protected.DELETE("/users/me/avatar", userHandler.DeleteAvatar)
+
+		// Upload ảnh chung (không gắn với entity cụ thể) - trả về imageUrl để lưu vào
+		// field tương ứng ở nơi khác (ảnh phòng, ảnh đính kèm...). Cả 2 role đều gọi được.
+		protected.POST("/uploads/image", uploadHandler.UploadImage)
 
 		// Users - chỉ manager quản lý tenant
 		users := protected.Group("/users")

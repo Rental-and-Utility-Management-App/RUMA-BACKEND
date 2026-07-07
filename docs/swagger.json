@@ -1366,6 +1366,50 @@
                 }
             }
         },
+        "/api/uploads/image": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Upload ảnh bất kỳ (ảnh phòng, ảnh đính kèm...) lên Cloudinary và trả về imageUrl để lưu vào field tương ứng ở nơi khác.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Uploads"
+                ],
+                "summary": "Upload 1 ảnh lên Cloudinary",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "File ảnh (jpeg/png/webp, tối đa 5MB)",
+                        "name": "image",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Thư mục lưu trên Cloudinary, mặc định 'general'",
+                        "name": "folder",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/users": {
             "get": {
                 "security": [

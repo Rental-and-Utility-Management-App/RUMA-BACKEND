@@ -1311,6 +1311,35 @@ paths:
       summary: Chạy tay các cron job hàng ngày (test/vận hành)
       tags:
       - System
+  /api/uploads/image:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Upload ảnh bất kỳ (ảnh phòng, ảnh đính kèm...) lên Cloudinary và
+        trả về imageUrl để lưu vào field tương ứng ở nơi khác.
+      parameters:
+      - description: File ảnh (jpeg/png/webp, tối đa 5MB)
+        in: formData
+        name: image
+        required: true
+        type: file
+      - description: Thư mục lưu trên Cloudinary, mặc định 'general'
+        in: query
+        name: folder
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload 1 ảnh lên Cloudinary
+      tags:
+      - Uploads
   /api/users:
     get:
       consumes:
