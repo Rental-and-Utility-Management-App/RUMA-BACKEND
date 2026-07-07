@@ -29,6 +29,13 @@ type Config struct {
 	// API Key để xác thực webhook gọi đến từ SePay (cấu hình cùng giá trị bên my.sepay.vn).
 	// Để trống -> webhook bị từ chối hoàn toàn (an toàn theo mặc định, không cho phép bỏ qua xác thực).
 	SepayWebhookAPIKey string
+
+	// Thông tin tài khoản Cloudinary dùng để upload avatar người dùng.
+	// API Key/Secret PHẢI lấy từ Cloudinary Dashboard > Settings > API Keys và set qua biến môi trường,
+	// KHÔNG hardcode trong code (secret dùng để ký request upload).
+	CloudinaryCloudName string
+	CloudinaryAPIKey    string
+	CloudinaryAPISecret string
 }
 
 func Load() *Config {
@@ -62,6 +69,12 @@ func Load() *Config {
 		VietQRTemplate:  getEnv("VIETQR_TEMPLATE", "compact2"),
 
 		SepayWebhookAPIKey: getEnv("SEPAY_WEBHOOK_API_KEY", ""),
+
+		// Mặc định cloud_name = "dxm8oe8w1" (đã cấu hình sẵn cho project RUMA),
+		// nhưng vẫn cho phép override qua env nếu cần đổi tài khoản Cloudinary.
+		CloudinaryCloudName: getEnv("CLOUDINARY_CLOUD_NAME", "dxm8oe8w1"),
+		CloudinaryAPIKey:    getEnv("CLOUDINARY_API_KEY", ""),
+		CloudinaryAPISecret: getEnv("CLOUDINARY_API_SECRET", ""),
 	}
 }
 

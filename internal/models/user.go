@@ -34,30 +34,36 @@ type User struct {
 	Role         Role                `bson:"role" json:"role"`
 	RoomID       *primitive.ObjectID `bson:"room_id,omitempty" json:"room_id,omitempty"` // chỉ tenant mới có
 	IsActive     bool                `bson:"is_active" json:"is_active"`
-	CreatedAt    time.Time           `bson:"created_at" json:"created_at"`
-	UpdatedAt    time.Time           `bson:"updated_at" json:"updated_at"`
+	AvatarURL    string              `bson:"avatar_url,omitempty" json:"avatar_url,omitempty"`
+	// AvatarPublicID lưu public_id của ảnh trên Cloudinary (dùng để xóa ảnh cũ khi cần).
+	// Không trả ra ngoài API vì chỉ là chi tiết nội bộ.
+	AvatarPublicID string    `bson:"avatar_public_id,omitempty" json:"-"`
+	CreatedAt      time.Time `bson:"created_at" json:"created_at"`
+	UpdatedAt      time.Time `bson:"updated_at" json:"updated_at"`
 }
 
 // Dữ liệu trả về khi login/register (không có password hash)
 type UserResponse struct {
-	ID       primitive.ObjectID  `json:"id"`
-	FullName string              `json:"full_name"`
-	Phone    string              `json:"phone"`
-	Email    string              `json:"email,omitempty"`
-	Role     Role                `json:"role"`
-	RoomID   *primitive.ObjectID `json:"room_id,omitempty"`
-	IsActive bool                `json:"is_active"`
-	Room     *Room               `json:"room,omitempty"`
+	ID        primitive.ObjectID  `json:"id"`
+	FullName  string              `json:"full_name"`
+	Phone     string              `json:"phone"`
+	Email     string              `json:"email,omitempty"`
+	Role      Role                `json:"role"`
+	RoomID    *primitive.ObjectID `json:"room_id,omitempty"`
+	IsActive  bool                `json:"is_active"`
+	AvatarURL string              `json:"avatar_url,omitempty"`
+	Room      *Room               `json:"room,omitempty"`
 }
 
 func (u *User) ToResponse() UserResponse {
 	return UserResponse{
-		ID:       u.ID,
-		FullName: u.FullName,
-		Phone:    u.Phone,
-		Email:    u.Email,
-		Role:     u.Role,
-		RoomID:   u.RoomID,
-		IsActive: u.IsActive,
+		ID:        u.ID,
+		FullName:  u.FullName,
+		Phone:     u.Phone,
+		Email:     u.Email,
+		Role:      u.Role,
+		RoomID:    u.RoomID,
+		IsActive:  u.IsActive,
+		AvatarURL: u.AvatarURL,
 	}
 }

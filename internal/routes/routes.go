@@ -17,6 +17,7 @@ import (
 	"rental-app/internal/handlers"
 	"rental-app/internal/middleware"
 	"rental-app/internal/models"
+	"rental-app/internal/services"
 	"rental-app/internal/utils"
 )
 
@@ -41,8 +42,10 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 	// 2. Bật giao diện Swagger Web (Route này để ở ngoài cùng, ai cũng truy cập được để xem docs)
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
+	cloudinaryService := services.NewCloudinaryService(cfg)
+
 	authHandler := handlers.NewAuthHandler(cfg)
-	userHandler := handlers.NewUserHandler()
+	userHandler := handlers.NewUserHandler(cloudinaryService)
 	roomHandler := handlers.NewRoomHandler()
 	invoiceHandler := handlers.NewInvoiceHandler(cfg)
 	paymentHandler := handlers.NewPaymentHandler(cfg)
@@ -74,6 +77,11 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 	{
 		protected.GET("/auth/me", authHandler.Me)
 		protected.PUT("/auth/change-password", authHandler.ChangePassword)
+
+		// Avatar - tự phục vụ, cả Manager và Tenant đều gọi được cho chính mình
+		// (đặt ngoài group /users vì group đó chỉ dành cho Manager quản lý tenant khác).
+		protected.POST("/users/me/avatar", userHandler.UploadAvatar)
+		protected.DELETE("/users/me/avatar", userHandler.DeleteAvatar)
 
 		// Users - chỉ manager quản lý tenant
 		users := protected.Group("/users")

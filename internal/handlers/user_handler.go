@@ -12,13 +12,26 @@ import (
 
 	"rental-app/internal/config"
 	"rental-app/internal/models"
+	"rental-app/internal/services"
 	"rental-app/internal/utils"
 )
 
-type UserHandler struct{}
+// maxAvatarSizeBytes giới hạn kích thước file avatar upload lên (5MB).
+const maxAvatarSizeBytes = 5 << 20 // 5MB
 
-func NewUserHandler() *UserHandler {
-	return &UserHandler{}
+// allowedAvatarContentTypes liệt kê các định dạng ảnh được phép làm avatar.
+var allowedAvatarContentTypes = map[string]bool{
+	"image/jpeg": true,
+	"image/png":  true,
+	"image/webp": true,
+}
+
+type UserHandler struct {
+	cloudinary *services.CloudinaryService
+}
+
+func NewUserHandler(cloudinary *services.CloudinaryService) *UserHandler {
+	return &UserHandler{cloudinary: cloudinary}
 }
 
 type createTenantRequest struct {
@@ -502,4 +515,125 @@ func (h *UserHandler) UnassignRoom(c *gin.Context) {
 		"tenant_id": tenantID,
 		"room_id":   oldRoomID,
 	})
+}
+
+// UploadAvatar godoc
+// @Summary Upload/đổi ảnh đại diện
+// @Description Upload ảnh đại diện cho user đang đăng nhập (cả Manager và Tenant), lưu trên Cloudinary.
+// @Tags Users
+// @Accept multipart/form-data
+// @Produce json
+// @Security BearerAuth
+// @Param avatar formData file true "File ảnh (jpeg/png/webp, tối đa 5MB)"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/users/me/avatar [post]
+func (h *UserHandler) UploadAvatar(c *gin.Context) {
+	if h.cloudinary == nil || !h.cloudinary.IsConfigured() {
+		utils.Error(c, http.StatusServiceUnavailable, "Chức năng upload avatar chưa được cấu hình (thiếu CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET)")
+		return
+	}
+
+	userIDStr := c.GetString("user_id")
+	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "User ID không hợp lệ")
+		return
+	}
+
+	fileHeader, err := c.FormFile("avatar")
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "Vui lòng chọn file ảnh (field 'avatar')")
+		return
+	}
+
+	if fileHeader.Size > maxAvatarSizeBytes {
+		utils.Error(c, http.StatusBadRequest, "File ảnh vượt quá dung lượng cho phép (tối đa 5MB)")
+		return
+	}
+
+	contentType := fileHeader.Header.Get("Content-Type")
+	if !allowedAvatarContentTypes[contentType] {
+		utils.Error(c, http.StatusBadRequest, "Chỉ hỗ trợ file ảnh JPEG, PNG hoặc WEBP")
+		return
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Không thể đọc file ảnh")
+		return
+	}
+	defer file.Close()
+
+	result, err := h.cloudinary.UploadAvatar(file, fileHeader.Filename, userID.Hex())
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Upload ảnh thất bại: "+err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	usersCol := config.GetCollection("users")
+	if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": userID}, bson.M{
+		"$set": bson.M{
+			"avatar_url":       result.SecureURL,
+			"avatar_public_id": result.PublicID,
+			"updated_at":       time.Now(),
+		},
+	}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Upload ảnh thành công nhưng cập nhật tài khoản thất bại")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Cập nhật ảnh đại diện thành công", gin.H{
+		"avatar_url": result.SecureURL,
+	})
+}
+
+// DeleteAvatar godoc
+// @Summary Gỡ ảnh đại diện
+// @Description Gỡ ảnh đại diện hiện tại của user đang đăng nhập.
+// @Tags Users
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Router /api/users/me/avatar [delete]
+func (h *UserHandler) DeleteAvatar(c *gin.Context) {
+	userIDStr := c.GetString("user_id")
+	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		utils.Error(c, http.StatusBadRequest, "User ID không hợp lệ")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	usersCol := config.GetCollection("users")
+	var user models.User
+	if err := usersCol.FindOne(ctx, bson.M{"_id": userID}).Decode(&user); err != nil {
+		utils.Error(c, http.StatusNotFound, "Không tìm thấy người dùng")
+		return
+	}
+
+	if user.AvatarPublicID == "" {
+		utils.Error(c, http.StatusConflict, "Tài khoản hiện không có ảnh đại diện")
+		return
+	}
+
+	// Không coi lỗi xóa trên Cloudinary là nghiêm trọng - vẫn tiếp tục gỡ khỏi DB
+	// để trải nghiệm người dùng không bị chặn bởi lỗi tạm thời của dịch vụ ngoài.
+	if h.cloudinary != nil && h.cloudinary.IsConfigured() {
+		_ = h.cloudinary.DeleteImage(user.AvatarPublicID)
+	}
+
+	if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": userID}, bson.M{
+		"$set":   bson.M{"updated_at": time.Now()},
+		"$unset": bson.M{"avatar_url": "", "avatar_public_id": ""},
+	}); err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Không thể cập nhật tài khoản")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Gỡ ảnh đại diện thành công", nil)
 }
