@@ -150,15 +150,13 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Lọc theo phòng",
                         "name": "room_id",
-                        "in": "query",
-                        "required": false
+                        "in": "query"
                     },
                     {
                         "type": "string",
                         "description": "Lọc theo trạng thái (active|ended|terminated|cancelled)",
                         "name": "status",
-                        "in": "query",
-                        "required": false
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -177,7 +175,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager tạo hợp đồng thuê cho 1 nhóm tenant vào 1 phòng: gán tenant vào phòng, khởi tạo thông tin cọc/thời hạn. Phòng đích không được có hợp đồng \"active\" khác, và tenant không được đang thuộc phòng nào khác.",
+                "description": "Manager tạo hợp đồng thuê cho 1 nhóm tenant vào 1 phòng: gán\ntenant vào phòng, khởi tạo thông tin cọc/thời hạn. Phòng đích\nkhông được có hợp đồng \"active\" khác, và tenant không được\nđang thuộc phòng nào khác.",
                 "consumes": [
                     "application/json"
                 ],
@@ -217,7 +215,6 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "",
                 "consumes": [
                     "application/json"
                 ],
@@ -253,7 +250,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Sửa ghi chú/giá thuê/tiền cọc thỏa thuận (deposit_amount chỉ sửa được khi chưa thu cọc). Để đổi ngày hết hạn, dùng endpoint gia hạn (/extend). Để kết thúc hợp đồng, dùng /checkout.",
+                "description": "Sửa ghi chú/giá thuê/tiền cọc thỏa thuận (deposit_amount chỉ sửa được khi chưa thu cọc).\nĐể đổi ngày hết hạn, dùng endpoint gia hạn (/extend). Để kết thúc hợp đồng, dùng /checkout.",
                 "consumes": [
                     "application/json"
                 ],
@@ -300,7 +297,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Chỉ hủy được khi hợp đồng đang active VÀ chưa thu đồng cọc nào. Nếu đã thu cọc, phải dùng /checkout để hoàn/giữ cọc đúng quy trình.",
+                "description": "Chỉ hủy được khi hợp đồng đang active VÀ chưa thu đồng cọc nào.\nNếu đã thu cọc, phải dùng /checkout để hoàn/giữ cọc đúng quy trình.",
                 "consumes": [
                     "application/json"
                 ],
@@ -338,7 +335,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager xác nhận tenant trả phòng: đóng hợp đồng (ended nếu tới/qua hạn, terminated nếu chấm dứt sớm), hoàn cọc theo refund_amount (có thể giữ lại 1 phần), gỡ toàn bộ tenant của hợp đồng khỏi phòng.",
+                "description": "Manager xác nhận tenant trả phòng: đóng hợp đồng (ended nếu tới/qua\nhạn, terminated nếu chấm dứt sớm), hoàn cọc theo refund_amount (có thể\ngiữ lại 1 phần), gỡ toàn bộ tenant của hợp đồng khỏi phòng.",
                 "consumes": [
                     "application/json"
                 ],
@@ -432,7 +429,6 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "",
                 "consumes": [
                     "application/json"
                 ],
@@ -470,7 +466,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager gia hạn hợp đồng đang active, đẩy end_date ra xa hơn. Lịch sử gia hạn được lưu lại trong renewals để tra cứu.",
+                "description": "Manager gia hạn hợp đồng đang active, đẩy end_date ra xa hơn.\nLịch sử gia hạn được lưu lại trong renewals để tra cứu.",
                 "consumes": [
                     "application/json"
                 ],
@@ -517,7 +513,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager thêm 1 tenant có sẵn vào hợp đồng đang active (ở ghép giữa chừng), gán luôn tenant đó vào phòng của hợp đồng. Tenant phải chưa thuộc phòng nào khác và chưa đứng tên hợp đồng active nào khác.",
+                "description": "Manager thêm 1 tenant có sẵn vào hợp đồng đang active (ở ghép\ngiữa chừng), gán luôn tenant đó vào phòng của hợp đồng. Tenant\nphải chưa thuộc phòng nào khác và chưa đứng tên hợp đồng active nào khác.",
                 "consumes": [
                     "application/json"
                 ],
@@ -564,7 +560,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager gỡ 1 tenant khỏi hợp đồng đang active (những tenant khác vẫn ở lại, hợp đồng vẫn active). Không cho gỡ nếu đây là tenant cuối cùng của hợp đồng - trường hợp đó phải dùng /checkout hoặc /cancel để đóng hẳn hợp đồng.",
+                "description": "Manager gỡ 1 tenant khỏi hợp đồng đang active (những tenant\nkhác vẫn ở lại, hợp đồng vẫn active). Không cho gỡ nếu đây là\ntenant cuối cùng của hợp đồng - trường hợp đó phải dùng\n/checkout hoặc /cancel để đóng hẳn hợp đồng.",
                 "consumes": [
                     "application/json"
                 ],
@@ -683,6 +679,45 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/invoices/generate-draft": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager chạy tay (hoặc để cron tự chạy đầu mỗi tháng) để tạo\nhóa đơn \"draft\" cho mọi phòng có hợp đồng active chưa có hóa\nđơn tháng này. Tiền phòng/phí quản lý đã tự suy ra sẵn, chỉ còn\nthiếu chỉ số điện/nước - dùng ConfirmDraftInvoice để hoàn tất.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Invoices"
+                ],
+                "summary": "Tạo hóa đơn nháp cho toàn bộ phòng đang có hợp đồng active",
+                "parameters": [
+                    {
+                        "description": "Tháng/năm cần tạo (mặc định tháng hiện tại)",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.generateDraftInvoicesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/invoices/{id}": {
             "get": {
                 "security": [
@@ -726,7 +761,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager sửa hóa đơn tạo sai. CHỈ cho phép sửa khi hóa đơn chưa ghi nhận thanh toán nào (paid_amount == 0) - nếu đã có thanh toán, hãy hủy hóa đơn (cancel) rồi tạo lại để tránh làm lệch số tiền đã thu.",
+                "description": "Manager sửa hóa đơn tạo sai. CHỈ cho phép sửa khi hóa đơn chưa\nghi nhận thanh toán nào (paid_amount == 0) - nếu đã có thanh\ntoán, hãy hủy hóa đơn (cancel) rồi tạo lại để tránh làm lệch\nsố tiền đã thu.",
                 "consumes": [
                     "application/json"
                 ],
@@ -773,7 +808,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager hủy 1 hóa đơn tạo sai. CHỈ cho phép hủy khi chưa ghi nhận thanh toán nào (paid_amount == 0), để không mất dấu vết dòng tiền đã thu. Hóa đơn hủy vẫn được giữ lại (soft-cancel) để tra cứu, không tính vào check trùng phòng/tháng khi tạo hóa đơn mới.",
+                "description": "Manager hủy 1 hóa đơn tạo sai. CHỈ cho phép hủy khi chưa ghi\nnhận thanh toán nào (paid_amount == 0), để không mất dấu vết\ndòng tiền đã thu. Hóa đơn hủy vẫn được giữ lại (soft-cancel) để\ntra cứu, không tính vào check trùng phòng/tháng khi tạo hóa đơn mới.",
                 "consumes": [
                     "application/json"
                 ],
@@ -804,6 +839,53 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/invoices/{id}/confirm": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager điền chỉ số điện/nước thật cho hóa đơn do cron tự động\ntạo (status=draft), hệ thống tính lại total_amount và chuyển\nhóa đơn sang \"unpaid\" - từ lúc này tenant mới thấy được hóa đơn.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Invoices"
+                ],
+                "summary": "Xác nhận hóa đơn nháp (điền chỉ số điện/nước)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Invoice ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Chỉ số điện/nước thật",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.confirmDraftInvoiceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/invoices/{id}/qr-code": {
             "get": {
                 "security": [
@@ -811,7 +893,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Sinh mã VietQR (chuyển khoản ngân hàng) với số tiền = số tiền còn lại của hóa đơn, nội dung chuyển khoản tự động điền theo mã phòng + tháng/năm. Cần cấu hình BANK_ID, BANK_ACCOUNT_NO, BANK_ACCOUNT_NAME trong biến môi trường.",
+                "description": "Sinh mã VietQR (chuyển khoản ngân hàng) với số tiền = số tiền còn lại của hóa đơn,\nnội dung chuyển khoản tự động điền theo mã phòng + tháng/năm.\nCần cấu hình BANK_ID, BANK_ACCOUNT_NO, BANK_ACCOUNT_NAME trong biến môi trường.",
                 "consumes": [
                     "application/json"
                 ],
@@ -924,7 +1006,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager sửa lại 1 payment ghi nhận nhầm (sai số tiền/phương thức/ngày). Invoice liên quan sẽ được tính lại paid_amount/status từ tổng các payment thực tế còn lại. Không cho sửa payment tự động qua webhook (is_auto_confirmed) vì phải khớp với giao dịch ngân hàng thật. Số tiền sửa lại không được làm tổng thanh toán vượt quá total_amount của hóa đơn.",
+                "description": "Manager sửa lại 1 payment ghi nhận nhầm (sai số tiền/phương thức/ngày).\nInvoice liên quan sẽ được tính lại paid_amount/status từ tổng\ncác payment thực tế còn lại. Không cho sửa payment tự động qua webhook\n(is_auto_confirmed) vì phải khớp với giao dịch ngân hàng thật.",
                 "consumes": [
                     "application/json"
                 ],
@@ -969,7 +1051,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager xóa 1 payment ghi nhận nhầm. Invoice liên quan sẽ được tính lại paid_amount/status từ tổng các payment thực tế còn lại. Không cho xóa payment tự động qua webhook (is_auto_confirmed) - dữ liệu đó phải khớp với giao dịch ngân hàng thật, không nên xóa tay.",
+                "description": "Manager xóa 1 payment ghi nhận nhầm. Invoice liên quan sẽ được\ntính lại paid_amount/status từ tổng các payment thực tế còn lại.\nKhông cho xóa payment tự động qua webhook (is_auto_confirmed) -\ndữ liệu đó phải khớp với giao dịch ngân hàng thật, không nên xóa tay.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1000,6 +1082,49 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/reports/summary": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Manager xem nhanh doanh thu đã lập/đã thu trong 1 tháng, tỷ lệ\nlấp đầy phòng hiện tại, và danh sách công nợ (hóa đơn chưa thu đủ).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Reports"
+                ],
+                "summary": "Báo cáo tổng hợp (doanh thu / tỷ lệ lấp đầy / công nợ)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Tháng (mặc định tháng hiện tại)",
+                        "name": "month",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Năm (mặc định năm hiện tại)",
+                        "name": "year",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/rooms": {
             "get": {
                 "security": [
@@ -1007,7 +1132,6 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager xem tất cả phòng, Tenant chỉ xem phòng của mình.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1034,7 +1158,6 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager tạo phòng mới. Cần quyền Manager.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1074,7 +1197,6 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Lấy thông tin chi tiết phòng theo ID.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1110,7 +1232,6 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager cập nhật thông tin phòng.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1155,7 +1276,6 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager xóa phòng (Không thể xóa phòng đang có người ở).",
                 "consumes": [
                     "application/json"
                 ],
@@ -1193,7 +1313,6 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager xác nhận người thuê trả phòng: phòng chuyển về trạng thái trống (available),\ngỡ liên kết tenant khỏi phòng và gỡ phòng khỏi tài khoản tenant.\nHóa đơn/thanh toán cũ của tenant vẫn được giữ nguyên để tra cứu lịch sử.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1213,6 +1332,32 @@ const docTemplate = `{
                         "required": true
                     }
                 ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/system/run-daily-jobs": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Chạy ngay lập tức các job mà bình thường cron chạy tự động lúc\nnửa đêm: quét hóa đơn quá hạn, quét hợp đồng sắp hết hạn. Hữu\ních để kiểm tra ngay không cần chờ tới giờ cron hoặc qua ngày mới.\nKhông bao gồm tạo hóa đơn nháp đầu tháng - dùng riêng\nPOST /api/invoices/generate-draft cho việc đó.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System"
+                ],
+                "summary": "Chạy tay các cron job hàng ngày (test/vận hành)",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1381,7 +1526,6 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager gán 1 tenant đã tồn tại vào 1 phòng, hoặc đổi tenant đó sang phòng khác nếu đang ở phòng cũ. 1 phòng có thể chứa nhiều tenant (ở ghép). Có validate để tránh gán trùng (tenant đã ở đúng phòng đó rồi thì báo lỗi thay vì gán lại vô nghĩa).",
                 "consumes": [
                     "application/json"
                 ],
@@ -1426,7 +1570,6 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manager gỡ 1 tenant khỏi phòng hiện tại (những tenant khác ở ghép cùng phòng, nếu có, không bị ảnh hưởng). Phòng tự chuyển về \"available\" khi không còn tenant nào.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1459,7 +1602,7 @@ const docTemplate = `{
         },
         "/api/webhooks/sepay": {
             "post": {
-                "description": "Endpoint public (không cần JWT) để SePay gọi đến mỗi khi có biến động số dư. Xác thực bằng header Authorization: Apikey <SEPAY_WEBHOOK_API_KEY>. Tự động đối soát theo mã tham chiếu trong nội dung chuyển khoản và ghi nhận thanh toán.",
+                "description": "Endpoint public (không cần JWT) để SePay gọi đến mỗi khi có biến động số dư.\nXác thực bằng header Authorization: Apikey \u003cSEPAY_WEBHOOK_API_KEY\u003e.\nTự động đối soát theo mã tham chiếu trong nội dung chuyển khoản và ghi nhận thanh toán.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1496,6 +1639,9 @@ const docTemplate = `{
     "definitions": {
         "handlers.addTenantToContractRequest": {
             "type": "object",
+            "required": [
+                "tenant_id"
+            ],
             "properties": {
                 "tenant_id": {
                     "type": "string"
@@ -1504,6 +1650,9 @@ const docTemplate = `{
         },
         "handlers.assignRoomRequest": {
             "type": "object",
+            "required": [
+                "room_id"
+            ],
             "properties": {
                 "room_id": {
                     "type": "string"
@@ -1517,12 +1666,14 @@ const docTemplate = `{
                 "old_password"
             ],
             "properties": {
+                "old_password": {
+                    "type": "string",
+                    "x-order": "0"
+                },
                 "new_password": {
                     "type": "string",
-                    "minLength": 6
-                },
-                "old_password": {
-                    "type": "string"
+                    "minLength": 6,
+                    "x-order": "1"
                 }
             }
         },
@@ -1530,19 +1681,24 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "actual_end_date": {
+                    "description": "ActualEndDate: để trống -\u003e dùng thời điểm hiện tại. Nếu có, định dạng \"YYYY-MM-DD\".",
                     "type": "string"
                 },
                 "deduction_note": {
+                    "description": "DeductionNote: lý do trừ cọc (nếu refund_amount \u003c số cọc đang giữ).",
                     "type": "string"
                 },
                 "reason": {
+                    "description": "Reason: lý do chấm dứt hợp đồng nói chung (hết hạn, vi phạm, thỏa thuận...).",
                     "type": "string"
                 },
                 "refund_amount": {
-                    "type": "number"
+                    "description": "RefundAmount: số tiền cọc thực trả lại cho tenant (có thể \u003c số đã thu\nnếu trừ phí hư hỏng/nợ tiền phòng...). Bắt buộc khai báo rõ ràng,\nkhông tự động suy luận, để manager luôn kiểm soát số tiền hoàn.",
+                    "type": "number",
+                    "minimum": 0
                 },
                 "refund_method": {
-                    "type": "string"
+                    "$ref": "#/definitions/models.PaymentMethod"
                 }
             }
         },
@@ -1557,10 +1713,38 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "method": {
-                    "type": "string"
+                    "$ref": "#/definitions/models.PaymentMethod"
                 },
                 "note": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.confirmDraftInvoiceRequest": {
+            "type": "object",
+            "required": [
+                "electric_new",
+                "water_new"
+            ],
+            "properties": {
+                "due_date": {
+                    "description": "format: 2006-01-02, để trống giữ nguyên due_date tạm của bản nháp",
+                    "type": "string"
+                },
+                "electric_new": {
+                    "type": "number"
+                },
+                "occupants": {
+                    "type": "integer"
+                },
+                "other_fees": {
+                    "type": "number"
+                },
+                "other_note": {
+                    "type": "string"
+                },
+                "water_new": {
+                    "type": "number"
                 }
             }
         },
@@ -1574,12 +1758,15 @@ const docTemplate = `{
             ],
             "properties": {
                 "deposit_amount": {
-                    "type": "number"
+                    "type": "number",
+                    "minimum": 0
                 },
                 "end_date": {
+                    "description": "\"YYYY-MM-DD\"",
                     "type": "string"
                 },
                 "monthly_rent": {
+                    "description": "MonthlyRent: để trống -\u003e lấy theo giá niêm yết hiện tại của phòng.",
                     "type": "number"
                 },
                 "note": {
@@ -1589,10 +1776,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "start_date": {
+                    "description": "\"YYYY-MM-DD\", vd \"2025-07-01\"",
                     "type": "string"
                 },
                 "tenant_ids": {
                     "type": "array",
+                    "minItems": 1,
                     "items": {
                         "type": "string"
                     }
@@ -1624,6 +1813,10 @@ const docTemplate = `{
                     "type": "integer",
                     "maximum": 12,
                     "minimum": 1
+                },
+                "occupants": {
+                    "description": "Occupants: để trống (null) để hệ thống tự lấy số người hiện tại của phòng\n(room.occupants). Chỉ cần nhập tay nếu tháng này số người ở khác với\nsố đang lưu trên phòng (vd: có người mới dọn vào/ra giữa tháng).",
+                    "type": "integer"
                 },
                 "other_fees": {
                     "type": "number"
@@ -1660,8 +1853,16 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "method": {
-                    "description": "cash | bank_transfer | other",
-                    "type": "string"
+                    "enum": [
+                        "cash",
+                        "bank_transfer",
+                        "other"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.PaymentMethod"
+                        }
+                    ]
                 },
                 "note": {
                     "type": "string"
@@ -1675,20 +1876,25 @@ const docTemplate = `{
         "handlers.createRoomRequest": {
             "type": "object",
             "required": [
+                "capacity",
                 "code",
-                "electric_price",
                 "monthly_rent",
-                "water_price"
+                "price_electricity",
+                "price_water"
             ],
             "properties": {
+                "capacity": {
+                    "type": "integer",
+                    "minimum": 1
+                },
                 "code": {
                     "type": "string"
                 },
-                "electric_price": {
-                    "type": "number"
-                },
                 "floor": {
                     "type": "integer"
+                },
+                "management_fee_per_person": {
+                    "type": "number"
                 },
                 "monthly_rent": {
                     "type": "number"
@@ -1699,7 +1905,13 @@ const docTemplate = `{
                 "note": {
                     "type": "string"
                 },
-                "water_price": {
+                "occupants": {
+                    "type": "integer"
+                },
+                "price_electricity": {
+                    "type": "number"
+                },
+                "price_water": {
                     "type": "number"
                 }
             }
@@ -1738,13 +1950,27 @@ const docTemplate = `{
             ],
             "properties": {
                 "new_end_date": {
+                    "description": "\"YYYY-MM-DD\"",
                     "type": "string"
                 },
                 "new_monthly_rent": {
+                    "description": "để trống = giữ nguyên giá cũ",
                     "type": "number"
                 },
                 "note": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.generateDraftInvoicesRequest": {
+            "type": "object",
+            "properties": {
+                "month": {
+                    "description": "Month/Year: để trống -\u003e dùng tháng/năm hiện tại. Chỉ cần truyền khi\nmanager muốn tạo bù cho 1 tháng cụ thể khác tháng hiện tại.",
+                    "type": "integer"
+                },
+                "year": {
+                    "type": "integer"
                 }
             }
         },
@@ -1755,31 +1981,24 @@ const docTemplate = `{
                 "phone"
             ],
             "properties": {
-                "password": {
-                    "type": "string"
-                },
                 "phone": {
-                    "type": "string"
+                    "type": "string",
+                    "x-order": "0"
+                },
+                "password": {
+                    "type": "string",
+                    "x-order": "1"
                 }
             }
         },
         "handlers.sepayWebhookPayload": {
             "type": "object",
             "properties": {
-                "id": {
-                    "type": "integer"
-                },
-                "gateway": {
-                    "type": "string"
-                },
-                "transactionDate": {
-                    "type": "string"
-                },
                 "accountNumber": {
                     "type": "string"
                 },
-                "subAccount": {
-                    "type": "string"
+                "accumulated": {
+                    "type": "number"
                 },
                 "code": {
                     "type": "string"
@@ -1787,19 +2006,30 @@ const docTemplate = `{
                 "content": {
                     "type": "string"
                 },
-                "transferType": {
+                "description": {
                     "type": "string"
                 },
-                "description": {
+                "gateway": {
+                    "type": "string"
+                },
+                "id": {
+                    "description": "ID giao dịch phía SePay, dùng để chống trùng lặp",
+                    "type": "integer"
+                },
+                "referenceCode": {
+                    "type": "string"
+                },
+                "subAccount": {
+                    "type": "string"
+                },
+                "transactionDate": {
                     "type": "string"
                 },
                 "transferAmount": {
                     "type": "number"
                 },
-                "accumulated": {
-                    "type": "number"
-                },
-                "referenceCode": {
+                "transferType": {
+                    "description": "\"in\" | \"out\"",
                     "type": "string"
                 }
             }
@@ -1808,7 +2038,9 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "deposit_amount": {
-                    "type": "number"
+                    "description": "DepositAmount: chỉ cho sửa khi CHƯA thu đồng cọc nào (deposit_paid == 0),\ntránh làm sai lệch deposit_status đã tính dựa trên số đã thu.",
+                    "type": "number",
+                    "minimum": 0
                 },
                 "monthly_rent": {
                     "type": "number"
@@ -1821,11 +2053,15 @@ const docTemplate = `{
         "handlers.updateInvoiceRequest": {
             "type": "object",
             "properties": {
+                "due_date": {
+                    "description": "format: 2006-01-02",
+                    "type": "string"
+                },
                 "electric_new": {
                     "type": "number"
                 },
-                "water_new": {
-                    "type": "number"
+                "occupants": {
+                    "type": "integer"
                 },
                 "other_fees": {
                     "type": "number"
@@ -1833,11 +2069,8 @@ const docTemplate = `{
                 "other_note": {
                     "type": "string"
                 },
-                "occupants": {
-                    "type": "integer"
-                },
-                "due_date": {
-                    "type": "string"
+                "water_new": {
+                    "type": "number"
                 }
             }
         },
@@ -1848,12 +2081,22 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "method": {
-                    "type": "string"
+                    "enum": [
+                        "cash",
+                        "bank_transfer",
+                        "other"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.PaymentMethod"
+                        }
+                    ]
                 },
                 "note": {
                     "type": "string"
                 },
                 "paid_at": {
+                    "description": "format: 2006-01-02",
                     "type": "string"
                 }
             }
@@ -1861,11 +2104,15 @@ const docTemplate = `{
         "handlers.updateRoomRequest": {
             "type": "object",
             "properties": {
-                "electric_price": {
-                    "type": "number"
+                "capacity": {
+                    "type": "integer",
+                    "minimum": 1
                 },
                 "floor": {
                     "type": "integer"
+                },
+                "management_fee_per_person": {
+                    "type": "number"
                 },
                 "monthly_rent": {
                     "type": "number"
@@ -1876,11 +2123,25 @@ const docTemplate = `{
                 "note": {
                     "type": "string"
                 },
-                "status": {
-                    "type": "string"
+                "occupants": {
+                    "type": "integer"
                 },
-                "water_price": {
+                "price_electricity": {
                     "type": "number"
+                },
+                "price_water": {
+                    "type": "number"
+                },
+                "status": {
+                    "enum": [
+                        "available",
+                        "occupied"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.RoomStatus"
+                        }
+                    ]
                 }
             }
         },
@@ -1897,17 +2158,40 @@ const docTemplate = `{
                     "type": "boolean"
                 }
             }
+        },
+        "models.PaymentMethod": {
+            "type": "string",
+            "enum": [
+                "cash",
+                "bank_transfer",
+                "other"
+            ],
+            "x-enum-varnames": [
+                "PaymentMethodCash",
+                "PaymentMethodTransfer",
+                "PaymentMethodOther"
+            ]
+        },
+        "models.RoomStatus": {
+            "type": "string",
+            "enum": [
+                "available",
+                "occupied"
+            ],
+            "x-enum-varnames": [
+                "RoomStatusAvailable",
+                "RoomStatusOccupied"
+            ]
         }
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "Nhập theo định dạng: Bearer {token}",
+            "description": "Dán trực tiếp giá trị token vào đây (không cần gõ \"Bearer \" phía trước, server tự nhận diện cả 2 dạng)",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"
         }
     }
-
 }`
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
