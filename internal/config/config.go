@@ -37,12 +37,14 @@ type Config struct {
 	CloudinaryAPIKey    string
 	CloudinaryAPISecret string
 
-	// Thông tin Resend (https://resend.com) dùng để gửi email qua HTTP API (port 443),
-	// thay vì SMTP (port 25/465/587) vì nhiều nhà cung cấp hosting (Render free tier...)
+	// Thông tin SendGrid (https://sendgrid.com) dùng để gửi email qua HTTP API (port 443),
+	// thay vì SMTP (port 25/465/587) - vì nhiều nhà cung cấp hosting (vd: Render free tier)
 	// chặn traffic outbound tới các port SMTP để chống spam.
-	ResendAPIKey    string
-	ResendFromName  string
-	ResendFromEmail string
+	// SENDGRID_FROM_EMAIL PHẢI là địa chỉ đã verify qua "Single Sender Verification" trong
+	// SendGrid Dashboard > Settings > Sender Authentication (không cần domain riêng).
+	SendGridAPIKey    string
+	SendGridFromName  string
+	SendGridFromEmail string
 }
 
 func Load() *Config {
@@ -83,12 +85,11 @@ func Load() *Config {
 		CloudinaryAPIKey:    getEnv("CLOUDINARY_API_KEY", ""),
 		CloudinaryAPISecret: getEnv("CLOUDINARY_API_SECRET", ""),
 
-		// RESEND_FROM_EMAIL: nếu chưa verify domain riêng trên Resend, dùng mặc định
-		// "onboarding@resend.dev" (chỉ gửi được tới email của chính tài khoản Resend
-		// cho tới khi bạn verify 1 domain thật trong Resend Dashboard).
-		ResendAPIKey:    getEnv("RESEND_API_KEY", ""),
-		ResendFromName:  getEnv("RESEND_FROM_NAME", "RUMA"),
-		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "onboarding@resend.dev"),
+		// SENDGRID_FROM_EMAIL: phải trùng với email bạn đã verify qua Single Sender
+		// Verification trong SendGrid Dashboard (Settings > Sender Authentication).
+		SendGridAPIKey:    getEnv("SENDGRID_API_KEY", ""),
+		SendGridFromName:  getEnv("SENDGRID_FROM_NAME", "RUMA"),
+		SendGridFromEmail: getEnv("SENDGRID_FROM_EMAIL", ""),
 	}
 }
 

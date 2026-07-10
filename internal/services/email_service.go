@@ -12,12 +12,17 @@ import (
 	"rental-app/internal/config"
 )
 
-const resendAPIURL = "https://api.resend.com/emails"
+const sendGridAPIURL = "https://api.sendgrid.com/v3/mail/send"
 
-// EmailService gửi email qua Resend HTTP API (https://resend.com), dùng port 443 (HTTPS)
+// EmailService gửi email qua SendGrid HTTP API (https://sendgrid.com), dùng port 443 (HTTPS)
 // thay vì SMTP (port 25/465/587) - vì nhiều nhà cung cấp hosting (vd: Render free tier)
 // chặn traffic outbound tới các port SMTP để chống spam, khiến gửi mail qua net/smtp bị
 // "connection timed out". Gọi qua HTTPS API tránh được vấn đề này.
+//
+// Sender (SendGridFromEmail) cần được verify qua "Single Sender Verification" trong
+// SendGrid Dashboard > Settings > Sender Authentication - không cần sở hữu domain riêng,
+// chỉ cần bấm link xác nhận gửi vào chính email đó. Sau khi verify, gửi được tới bất kỳ
+// người nhận nào (khác với Resend sandbox chỉ cho gửi về đúng email chủ tài khoản).
 type EmailService struct {
 	apiKey    string
 	fromName  string
@@ -27,41 +32,54 @@ type EmailService struct {
 
 func NewEmailService(cfg *config.Config) *EmailService {
 	return &EmailService{
-		apiKey:    cfg.ResendAPIKey,
-		fromName:  cfg.ResendFromName,
-		fromEmail: cfg.ResendFromEmail,
+		apiKey:    cfg.SendGridAPIKey,
+		fromName:  cfg.SendGridFromName,
+		fromEmail: cfg.SendGridFromEmail,
 		client:    &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
-// IsConfigured kiểm tra đã có API key của Resend chưa.
+// IsConfigured kiểm tra đã có API key + sender email của SendGrid chưa.
 func (s *EmailService) IsConfigured() bool {
 	return s.apiKey != "" && s.fromEmail != ""
 }
 
-type resendRequest struct {
-	From    string   `json:"from"`
-	To      []string `json:"to"`
-	Subject string   `json:"subject"`
-	HTML    string   `json:"html"`
+type sendGridEmailAddress struct {
+	Email string `json:"email"`
+	Name  string `json:"name,omitempty"`
 }
 
-// send gửi 1 email HTML qua Resend API.
+type sendGridPersonalization struct {
+	To []sendGridEmailAddress `json:"to"`
+}
+
+type sendGridContent struct {
+	Type  string `json:"type"`
+	Value string `json:"value"`
+}
+
+type sendGridRequest struct {
+	Personalizations []sendGridPersonalization `json:"personalizations"`
+	From             sendGridEmailAddress      `json:"from"`
+	Subject          string                    `json:"subject"`
+	Content          []sendGridContent         `json:"content"`
+}
+
+// send gửi 1 email HTML qua SendGrid API.
 func (s *EmailService) send(to, subject, htmlBody string) error {
 	if !s.IsConfigured() {
-		return fmt.Errorf("Resend chưa được cấu hình (thiếu RESEND_API_KEY)")
+		return fmt.Errorf("SendGrid chưa được cấu hình (thiếu SENDGRID_API_KEY/SENDGRID_FROM_EMAIL)")
 	}
 
-	from := s.fromEmail
-	if s.fromName != "" {
-		from = fmt.Sprintf("%s <%s>", s.fromName, s.fromEmail)
-	}
-
-	payload := resendRequest{
-		From:    from,
-		To:      []string{to},
+	payload := sendGridRequest{
+		Personalizations: []sendGridPersonalization{
+			{To: []sendGridEmailAddress{{Email: to}}},
+		},
+		From:    sendGridEmailAddress{Email: s.fromEmail, Name: s.fromName},
 		Subject: subject,
-		HTML:    htmlBody,
+		Content: []sendGridContent{
+			{Type: "text/html", Value: htmlBody},
+		},
 	}
 
 	body, err := json.Marshal(payload)
@@ -69,22 +87,23 @@ func (s *EmailService) send(to, subject, htmlBody string) error {
 		return fmt.Errorf("không thể tạo nội dung email: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, resendAPIURL, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, sendGridAPIURL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("không thể tạo request tới Resend: %w", err)
+		return fmt.Errorf("không thể tạo request tới SendGrid: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+s.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("gọi Resend API thất bại: %w", err)
+		return fmt.Errorf("gọi SendGrid API thất bại: %w", err)
 	}
 	defer resp.Body.Close()
 
+	// SendGrid trả 202 Accepted khi thành công, không có body.
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("Resend API trả lỗi (status %d): %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("SendGrid API trả lỗi (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil
