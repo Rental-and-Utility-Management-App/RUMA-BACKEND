@@ -43,9 +43,10 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config) {
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	cloudinaryService := services.NewCloudinaryService(cfg)
+	emailService := services.NewEmailService(cfg)
 
 	authHandler := handlers.NewAuthHandler(cfg)
-	userHandler := handlers.NewUserHandler(cloudinaryService)
+	userHandler := handlers.NewUserHandler(cloudinaryService, emailService)
 	uploadHandler := handlers.NewUploadHandler(cloudinaryService)
 	roomHandler := handlers.NewRoomHandler()
 	invoiceHandler := handlers.NewInvoiceHandler(cfg)

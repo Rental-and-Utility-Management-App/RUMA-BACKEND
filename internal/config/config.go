@@ -36,6 +36,16 @@ type Config struct {
 	CloudinaryCloudName string
 	CloudinaryAPIKey    string
 	CloudinaryAPISecret string
+
+	// Thông tin SMTP dùng để gửi email (vd: cấp tài khoản/mật khẩu cho tenant mới).
+	// Với Gmail: SMTP_HOST=smtp.gmail.com, SMTP_PORT=587, SMTP_USERNAME=<gmail>,
+	// SMTP_PASSWORD=<App Password 16 ký tự, KHÔNG phải mật khẩu Gmail thường>.
+	SMTPHost      string
+	SMTPPort      string
+	SMTPUsername  string
+	SMTPPassword  string
+	SMTPFromName  string
+	SMTPFromEmail string
 }
 
 func Load() *Config {
@@ -75,6 +85,13 @@ func Load() *Config {
 		CloudinaryCloudName: getEnv("CLOUDINARY_CLOUD_NAME", "dxm8oe8w1"),
 		CloudinaryAPIKey:    getEnv("CLOUDINARY_API_KEY", ""),
 		CloudinaryAPISecret: getEnv("CLOUDINARY_API_SECRET", ""),
+
+		SMTPHost:      getEnv("SMTP_HOST", "smtp.gmail.com"),
+		SMTPPort:      getEnv("SMTP_PORT", "587"),
+		SMTPUsername:  getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:  getEnv("SMTP_PASSWORD", ""),
+		SMTPFromName:  getEnv("SMTP_FROM_NAME", "RUMA"),
+		SMTPFromEmail: getEnv("SMTP_FROM_EMAIL", getEnv("SMTP_USERNAME", "")),
 	}
 }
 

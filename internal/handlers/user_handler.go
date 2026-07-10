@@ -16,8 +16,8 @@ import (
 	"rental-app/internal/utils"
 )
 
-// maxAvatarSizeBytes giới hạn kích thước file avatar upload lên (5MB).
-const maxAvatarSizeBytes = 5 << 20 // 5MB
+// maxAvatarSizeBytes giới hạn kích thước file avatar upload lên (2MB).
+const maxAvatarSizeBytes = 2 << 20 // 2MB
 
 // allowedAvatarContentTypes liệt kê các định dạng ảnh được phép làm avatar.
 var allowedAvatarContentTypes = map[string]bool{
@@ -28,16 +28,17 @@ var allowedAvatarContentTypes = map[string]bool{
 
 type UserHandler struct {
 	cloudinary *services.CloudinaryService
+	email      *services.EmailService
 }
 
-func NewUserHandler(cloudinary *services.CloudinaryService) *UserHandler {
-	return &UserHandler{cloudinary: cloudinary}
+func NewUserHandler(cloudinary *services.CloudinaryService, email *services.EmailService) *UserHandler {
+	return &UserHandler{cloudinary: cloudinary, email: email}
 }
 
 type createTenantRequest struct {
 	FullName string `json:"full_name" binding:"required"`
 	Phone    string `json:"phone" binding:"required"`
-	Email    string `json:"email"`
+	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,min=6"`
 	RoomID   string `json:"room_id"` // optional lúc tạo, có thể gán phòng sau
 }
@@ -72,6 +73,17 @@ func (h *UserHandler) CreateTenant(c *gin.Context) {
 	}
 	if count > 0 {
 		utils.Error(c, http.StatusConflict, "Số điện thoại đã được sử dụng")
+		return
+	}
+
+	// Kiểm tra trùng email (email là bắt buộc và dùng để gửi tài khoản/mật khẩu)
+	emailCount, err := usersCol.CountDocuments(ctx, bson.M{"email": req.Email})
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if emailCount > 0 {
+		utils.Error(c, http.StatusConflict, "Email đã được sử dụng")
 		return
 	}
 
@@ -145,6 +157,13 @@ func (h *UserHandler) CreateTenant(c *gin.Context) {
 			utils.Error(c, http.StatusInternalServerError, "Tạo user thành công nhưng cập nhật phòng thất bại")
 			return
 		}
+	}
+
+	// Gửi email cấp tài khoản/mật khẩu cho tenant. Chạy nền (goroutine) để không làm
+	// chậm response nếu SMTP xử lý lâu; lỗi gửi mail được log bên trong service, không
+	// làm fail request tạo user (tài khoản đã tạo thành công trong DB).
+	if h.email != nil {
+		go h.email.SendTenantCredentials(user.Email, user.FullName, user.Phone, req.Password)
 	}
 
 	utils.Success(c, http.StatusCreated, "Tạo tài khoản người thuê thành công", user.ToResponse())
@@ -261,7 +280,7 @@ func (h *UserHandler) GetTenant(c *gin.Context) {
 
 type updateTenantRequest struct {
 	FullName string `json:"full_name"`
-	Email    string `json:"email"`
+	Email    string `json:"email" binding:"required,email"`
 	IsActive *bool  `json:"is_active"`
 }
 
@@ -293,14 +312,23 @@ func (h *UserHandler) UpdateTenant(c *gin.Context) {
 	if req.FullName != "" {
 		update["full_name"] = req.FullName
 	}
-	if req.Email != "" {
-		update["email"] = req.Email
-	}
+	update["email"] = req.Email
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	usersCol := config.GetCollection("users")
+
+	// Kiểm tra email không bị trùng với tài khoản khác (loại trừ chính tenant đang sửa)
+	emailCount, err := usersCol.CountDocuments(ctx, bson.M{"email": req.Email, "_id": bson.M{"$ne": id}})
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+	if emailCount > 0 {
+		utils.Error(c, http.StatusConflict, "Email đã được sử dụng bởi tài khoản khác")
+		return
+	}
 
 	if req.IsActive != nil && !*req.IsActive {
 		contractsCol := config.GetCollection("contracts")
