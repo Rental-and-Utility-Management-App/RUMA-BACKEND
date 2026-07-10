@@ -1,45 +1,55 @@
 package services
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
-	"net/smtp"
-	"strings"
+	"net/http"
+	"time"
 
 	"rental-app/internal/config"
 )
 
-// EmailService gửi email qua SMTP (vd: Gmail SMTP + App Password).
-// Dùng net/smtp có sẵn trong Go, không cần thêm dependency ngoài vào go.mod.
+const resendAPIURL = "https://api.resend.com/emails"
+
+// EmailService gửi email qua Resend HTTP API (https://resend.com), dùng port 443 (HTTPS)
+// thay vì SMTP (port 25/465/587) - vì nhiều nhà cung cấp hosting (vd: Render free tier)
+// chặn traffic outbound tới các port SMTP để chống spam, khiến gửi mail qua net/smtp bị
+// "connection timed out". Gọi qua HTTPS API tránh được vấn đề này.
 type EmailService struct {
-	host      string
-	port      string
-	username  string
-	password  string
+	apiKey    string
 	fromName  string
 	fromEmail string
+	client    *http.Client
 }
 
 func NewEmailService(cfg *config.Config) *EmailService {
 	return &EmailService{
-		host:      cfg.SMTPHost,
-		port:      cfg.SMTPPort,
-		username:  cfg.SMTPUsername,
-		password:  cfg.SMTPPassword,
-		fromName:  cfg.SMTPFromName,
-		fromEmail: cfg.SMTPFromEmail,
+		apiKey:    cfg.ResendAPIKey,
+		fromName:  cfg.ResendFromName,
+		fromEmail: cfg.ResendFromEmail,
+		client:    &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
-// IsConfigured kiểm tra đã đủ thông tin SMTP để gửi mail chưa.
+// IsConfigured kiểm tra đã có API key của Resend chưa.
 func (s *EmailService) IsConfigured() bool {
-	return s.host != "" && s.port != "" && s.username != "" && s.password != "" && s.fromEmail != ""
+	return s.apiKey != "" && s.fromEmail != ""
 }
 
-// send gửi 1 email HTML đơn giản tới 1 địa chỉ duy nhất.
+type resendRequest struct {
+	From    string   `json:"from"`
+	To      []string `json:"to"`
+	Subject string   `json:"subject"`
+	HTML    string   `json:"html"`
+}
+
+// send gửi 1 email HTML qua Resend API.
 func (s *EmailService) send(to, subject, htmlBody string) error {
 	if !s.IsConfigured() {
-		return fmt.Errorf("SMTP chưa được cấu hình (thiếu SMTP_USERNAME/SMTP_PASSWORD)")
+		return fmt.Errorf("Resend chưa được cấu hình (thiếu RESEND_API_KEY)")
 	}
 
 	from := s.fromEmail
@@ -47,27 +57,37 @@ func (s *EmailService) send(to, subject, htmlBody string) error {
 		from = fmt.Sprintf("%s <%s>", s.fromName, s.fromEmail)
 	}
 
-	headers := map[string]string{
-		"From":         from,
-		"To":           to,
-		"Subject":      subject,
-		"MIME-Version": "1.0",
-		"Content-Type": "text/html; charset=\"UTF-8\"",
+	payload := resendRequest{
+		From:    from,
+		To:      []string{to},
+		Subject: subject,
+		HTML:    htmlBody,
 	}
 
-	var msg strings.Builder
-	for k, v := range headers {
-		msg.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("không thể tạo nội dung email: %w", err)
 	}
-	msg.WriteString("\r\n")
-	msg.WriteString(htmlBody)
 
-	auth := smtp.PlainAuth("", s.username, s.password, s.host)
-	addr := fmt.Sprintf("%s:%s", s.host, s.port)
+	req, err := http.NewRequest(http.MethodPost, resendAPIURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("không thể tạo request tới Resend: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+s.apiKey)
+	req.Header.Set("Content-Type", "application/json")
 
-	// net/smtp.SendMail tự động dùng STARTTLS nếu server hỗ trợ (Gmail port 587 có hỗ trợ),
-	// nên không cần tự quản lý TLS handshake thủ công.
-	return smtp.SendMail(addr, auth, s.fromEmail, []string{to}, []byte(msg.String()))
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("gọi Resend API thất bại: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Resend API trả lỗi (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
 }
 
 // SendTenantCredentials gửi email cấp tài khoản (username = số điện thoại) + mật khẩu
