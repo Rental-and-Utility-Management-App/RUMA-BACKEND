@@ -94,7 +94,7 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	userIDStr := c.GetString("user_id")
 	userID, err := primitive.ObjectIDFromHex(userIDStr)
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "User ID không hợp lệ")
+		utils.Error(c, http.StatusUnauthorized, "Token không hợp lệ")
 		return
 	}
 
@@ -104,7 +104,23 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	usersCol := config.GetCollection("users")
 	var user models.User
 	if err := usersCol.FindOne(ctx, bson.M{"_id": userID}).Decode(&user); err != nil {
-		utils.Error(c, http.StatusNotFound, "Không tìm thấy người dùng")
+		if err == mongo.ErrNoDocuments {
+			// Token còn hạn nhưng user_id trong token không còn tồn tại trong DB
+			// (tài khoản đã bị xóa, hoặc DB đã được seed/reset lại). Về bản chất
+			// đây là "phiên đăng nhập không còn hợp lệ" chứ không phải "không tìm
+			// thấy resource", nên trả 401 để frontend tự động logout + xóa token
+			// cũ, thay vì 404 khiến người dùng bối rối.
+			utils.Error(c, http.StatusUnauthorized, "Phiên đăng nhập không còn hợp lệ, vui lòng đăng nhập lại")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
+		return
+	}
+
+	if !user.IsActive {
+		// Tài khoản đã bị khóa sau khi token được cấp -> cũng coi là phiên không
+		// còn hợp lệ, chặn ngay thay vì cho phép dùng tiếp token cũ.
+		utils.Error(c, http.StatusForbidden, "Tài khoản đã bị vô hiệu hóa")
 		return
 	}
 
@@ -136,7 +152,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	userIDStr := c.GetString("user_id")
 	userID, err := primitive.ObjectIDFromHex(userIDStr)
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "User ID không hợp lệ")
+		utils.Error(c, http.StatusUnauthorized, "Token không hợp lệ")
 		return
 	}
 
@@ -146,7 +162,11 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	usersCol := config.GetCollection("users")
 	var user models.User
 	if err := usersCol.FindOne(ctx, bson.M{"_id": userID}).Decode(&user); err != nil {
-		utils.Error(c, http.StatusNotFound, "Không tìm thấy người dùng")
+		if err == mongo.ErrNoDocuments {
+			utils.Error(c, http.StatusUnauthorized, "Phiên đăng nhập không còn hợp lệ, vui lòng đăng nhập lại")
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, "Lỗi hệ thống")
 		return
 	}
 
