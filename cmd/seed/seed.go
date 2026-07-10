@@ -18,6 +18,9 @@ import (
 // managerAvatarURL là avatar mặc định gán cho tài khoản manager khi seed.
 const managerAvatarURL = "https://res.cloudinary.com/dxm8oe8w1/image/upload/v1783434258/ruma/general/xigegm6jvfmmsxpv9wif.jpg"
 
+// managerEmail là email mặc định gán cho tài khoản manager khi seed.
+const managerEmail = "manager@ruma.com"
+
 func main() {
 	phone := flag.String("phone", "0984739739", "Số điện thoại tài khoản manager mặc định")
 	password := flag.String("password", "admin123", "Mật khẩu tài khoản manager mặc định")
@@ -38,7 +41,7 @@ func main() {
 	invoicesCol := config.GetCollection("invoices")
 	paymentsCol := config.GetCollection("payments")
 
-	managerID := seedManager(ctx, usersCol, *phone, *password, *fullName, managerAvatarURL)
+	managerID := seedManager(ctx, usersCol, *phone, *password, *fullName, managerAvatarURL, managerEmail)
 
 	roomIDs := seedRooms(ctx, roomsCol)
 	tenantIDs := seedTenants(ctx, usersCol, roomsCol, roomIDs)
@@ -55,20 +58,27 @@ func main() {
 // seedManager tạo tài khoản manager mặc định nếu chưa tồn tại, và luôn trả
 // về ID của tài khoản manager (mới tạo hoặc đã tồn tại từ trước) để các hàm
 // seed khác dùng làm created_by/confirmed_by, đảm bảo dữ liệu liên kết chặt.
-// Nếu tài khoản đã tồn tại từ trước, vẫn cập nhật avatarURL (nếu có truyền vào
-// và tài khoản đang chưa có avatar) để không phải xóa DB seed lại từ đầu.
-func seedManager(ctx context.Context, usersCol *mongo.Collection, phone, password, fullName, avatarURL string) primitive.ObjectID {
+// Nếu tài khoản đã tồn tại từ trước, vẫn cập nhật avatarURL/email (nếu có
+// truyền vào và tài khoản đang chưa có) để không phải xóa DB seed lại từ đầu.
+func seedManager(ctx context.Context, usersCol *mongo.Collection, phone, password, fullName, avatarURL, email string) primitive.ObjectID {
 	var existing models.User
 	err := usersCol.FindOne(ctx, bson.M{"phone": phone}).Decode(&existing)
 	if err == nil {
 		log.Printf("⚠️  Tài khoản manager với số điện thoại %s đã tồn tại, bỏ qua seed.", phone)
+
+		set := bson.M{}
 		if avatarURL != "" && existing.AvatarURL == "" {
-			if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": existing.ID}, bson.M{
-				"$set": bson.M{"avatar_url": avatarURL, "updated_at": time.Now()},
-			}); err != nil {
-				log.Printf("⚠️  Không thể cập nhật avatar cho manager %s: %v", phone, err)
+			set["avatar_url"] = avatarURL
+		}
+		if email != "" && existing.Email == "" {
+			set["email"] = email
+		}
+		if len(set) > 0 {
+			set["updated_at"] = time.Now()
+			if _, err := usersCol.UpdateOne(ctx, bson.M{"_id": existing.ID}, bson.M{"$set": set}); err != nil {
+				log.Printf("⚠️  Không thể cập nhật avatar/email cho manager %s: %v", phone, err)
 			} else {
-				log.Printf("✅ Đã cập nhật avatar cho manager %s", phone)
+				log.Printf("✅ Đã cập nhật avatar/email cho manager %s", phone)
 			}
 		}
 		return existing.ID
@@ -84,6 +94,7 @@ func seedManager(ctx context.Context, usersCol *mongo.Collection, phone, passwor
 		ID:           primitive.NewObjectID(),
 		FullName:     fullName,
 		Phone:        phone,
+		Email:        email,
 		PasswordHash: hash,
 		Role:         models.RoleManager,
 		IsActive:     true,
@@ -198,7 +209,15 @@ var tenantSeeds = []tenantSeed{
 		email:     "binhtang05@yahoo.com",
 		avatarURL: "https://res.cloudinary.com/dxm8oe8w1/image/upload/v1783434155/ruma/general/pmq4lbrddskk5gledqkt.jpg",
 	},
-	{fullName: "Nguyễn Tăng Tài Phát", phone: "0932000035", password: "phat123", roomCode: "101", isHead: true},
+	{
+		fullName:  "Nguyễn Tăng Tài Phát",
+		phone:     "0932000035",
+		password:  "phat123",
+		roomCode:  "101",
+		isHead:    true,
+		email:     "taiphat04@yahoo.com",
+		avatarURL: "https://res.cloudinary.com/dxm8oe8w1/image/upload/v1783483657/ruma/avatars/avatars/6a4d0cd435a051c7cfcf1eff.jpg",
+	},
 }
 
 // seedTenants tạo các tài khoản tenant và trả về map phone -> ObjectID
