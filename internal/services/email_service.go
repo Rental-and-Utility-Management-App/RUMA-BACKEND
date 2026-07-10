@@ -12,74 +12,60 @@ import (
 	"rental-app/internal/config"
 )
 
-const sendGridAPIURL = "https://api.sendgrid.com/v3/mail/send"
+const brevoAPIURL = "https://api.brevo.com/v3/smtp/email"
 
-// EmailService gửi email qua SendGrid HTTP API (https://sendgrid.com), dùng port 443 (HTTPS)
+// EmailService gửi email qua Brevo HTTP API (https://brevo.com), dùng port 443 (HTTPS)
 // thay vì SMTP (port 25/465/587) - vì nhiều nhà cung cấp hosting (vd: Render free tier)
 // chặn traffic outbound tới các port SMTP để chống spam, khiến gửi mail qua net/smtp bị
 // "connection timed out". Gọi qua HTTPS API tránh được vấn đề này.
 //
-// Sender (SendGridFromEmail) cần được verify qua "Single Sender Verification" trong
-// SendGrid Dashboard > Settings > Sender Authentication - không cần sở hữu domain riêng,
-// chỉ cần bấm link xác nhận gửi vào chính email đó. Sau khi verify, gửi được tới bất kỳ
-// người nhận nào (khác với Resend sandbox chỉ cho gửi về đúng email chủ tài khoản).
+// Sender (BrevoSenderEmail) cần được verify trong Brevo Dashboard > Senders, Domains &
+// Dedicated IPs > Senders > Add a Sender - không cần sở hữu domain riêng, chỉ cần bấm
+// link xác nhận gửi vào chính email đó. Sau khi verify, gửi được tới bất kỳ người nhận nào.
 type EmailService struct {
-	apiKey    string
-	fromName  string
-	fromEmail string
-	client    *http.Client
+	apiKey      string
+	senderName  string
+	senderEmail string
+	client      *http.Client
 }
 
 func NewEmailService(cfg *config.Config) *EmailService {
 	return &EmailService{
-		apiKey:    cfg.SendGridAPIKey,
-		fromName:  cfg.SendGridFromName,
-		fromEmail: cfg.SendGridFromEmail,
-		client:    &http.Client{Timeout: 15 * time.Second},
+		apiKey:      cfg.BrevoAPIKey,
+		senderName:  cfg.BrevoSenderName,
+		senderEmail: cfg.BrevoSenderEmail,
+		client:      &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
-// IsConfigured kiểm tra đã có API key + sender email của SendGrid chưa.
+// IsConfigured kiểm tra đã có API key + sender email của Brevo chưa.
 func (s *EmailService) IsConfigured() bool {
-	return s.apiKey != "" && s.fromEmail != ""
+	return s.apiKey != "" && s.senderEmail != ""
 }
 
-type sendGridEmailAddress struct {
-	Email string `json:"email"`
+type brevoEmailAddress struct {
 	Name  string `json:"name,omitempty"`
+	Email string `json:"email"`
 }
 
-type sendGridPersonalization struct {
-	To []sendGridEmailAddress `json:"to"`
+type brevoRequest struct {
+	Sender      brevoEmailAddress   `json:"sender"`
+	To          []brevoEmailAddress `json:"to"`
+	Subject     string              `json:"subject"`
+	HTMLContent string              `json:"htmlContent"`
 }
 
-type sendGridContent struct {
-	Type  string `json:"type"`
-	Value string `json:"value"`
-}
-
-type sendGridRequest struct {
-	Personalizations []sendGridPersonalization `json:"personalizations"`
-	From             sendGridEmailAddress      `json:"from"`
-	Subject          string                    `json:"subject"`
-	Content          []sendGridContent         `json:"content"`
-}
-
-// send gửi 1 email HTML qua SendGrid API.
+// send gửi 1 email HTML qua Brevo API.
 func (s *EmailService) send(to, subject, htmlBody string) error {
 	if !s.IsConfigured() {
-		return fmt.Errorf("SendGrid chưa được cấu hình (thiếu SENDGRID_API_KEY/SENDGRID_FROM_EMAIL)")
+		return fmt.Errorf("Brevo chưa được cấu hình (thiếu BREVO_API_KEY/BREVO_SENDER_EMAIL)")
 	}
 
-	payload := sendGridRequest{
-		Personalizations: []sendGridPersonalization{
-			{To: []sendGridEmailAddress{{Email: to}}},
-		},
-		From:    sendGridEmailAddress{Email: s.fromEmail, Name: s.fromName},
-		Subject: subject,
-		Content: []sendGridContent{
-			{Type: "text/html", Value: htmlBody},
-		},
+	payload := brevoRequest{
+		Sender:      brevoEmailAddress{Name: s.senderName, Email: s.senderEmail},
+		To:          []brevoEmailAddress{{Email: to}},
+		Subject:     subject,
+		HTMLContent: htmlBody,
 	}
 
 	body, err := json.Marshal(payload)
@@ -87,23 +73,25 @@ func (s *EmailService) send(to, subject, htmlBody string) error {
 		return fmt.Errorf("không thể tạo nội dung email: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, sendGridAPIURL, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, brevoAPIURL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("không thể tạo request tới SendGrid: %w", err)
+		return fmt.Errorf("không thể tạo request tới Brevo: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+s.apiKey)
+	// Brevo dùng header "api-key" riêng, KHÔNG dùng "Authorization: Bearer ..." như Resend/SendGrid.
+	req.Header.Set("api-key", s.apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("gọi SendGrid API thất bại: %w", err)
+		return fmt.Errorf("gọi Brevo API thất bại: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// SendGrid trả 202 Accepted khi thành công, không có body.
+	// Brevo trả 201 Created khi thành công.
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("SendGrid API trả lỗi (status %d): %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("Brevo API trả lỗi (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil

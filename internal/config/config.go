@@ -37,14 +37,14 @@ type Config struct {
 	CloudinaryAPIKey    string
 	CloudinaryAPISecret string
 
-	// Thông tin SendGrid (https://sendgrid.com) dùng để gửi email qua HTTP API (port 443),
-	// thay vì SMTP (port 25/465/587) - vì nhiều nhà cung cấp hosting (vd: Render free tier)
-	// chặn traffic outbound tới các port SMTP để chống spam.
-	// SENDGRID_FROM_EMAIL PHẢI là địa chỉ đã verify qua "Single Sender Verification" trong
-	// SendGrid Dashboard > Settings > Sender Authentication (không cần domain riêng).
-	SendGridAPIKey    string
-	SendGridFromName  string
-	SendGridFromEmail string
+	// Thông tin Brevo (https://brevo.com, trước đây là Sendinblue) dùng để gửi email qua
+	// HTTP API (port 443), thay vì SMTP (port 25/465/587) - vì nhiều nhà cung cấp hosting
+	// (vd: Render free tier) chặn traffic outbound tới các port SMTP để chống spam.
+	// BREVO_SENDER_EMAIL PHẢI là địa chỉ đã verify trong Brevo Dashboard > Senders,
+	// Domains & Dedicated IPs > Senders (không cần domain riêng, verify qua email).
+	BrevoAPIKey      string
+	BrevoSenderName  string
+	BrevoSenderEmail string
 }
 
 func Load() *Config {
@@ -85,11 +85,11 @@ func Load() *Config {
 		CloudinaryAPIKey:    getEnv("CLOUDINARY_API_KEY", ""),
 		CloudinaryAPISecret: getEnv("CLOUDINARY_API_SECRET", ""),
 
-		// SENDGRID_FROM_EMAIL: phải trùng với email bạn đã verify qua Single Sender
-		// Verification trong SendGrid Dashboard (Settings > Sender Authentication).
-		SendGridAPIKey:    getEnv("SENDGRID_API_KEY", ""),
-		SendGridFromName:  getEnv("SENDGRID_FROM_NAME", "RUMA"),
-		SendGridFromEmail: getEnv("SENDGRID_FROM_EMAIL", ""),
+		// BREVO_SENDER_EMAIL: phải trùng với email bạn đã verify trong Brevo Dashboard
+		// (Senders, Domains & Dedicated IPs > Senders > Add a Sender).
+		BrevoAPIKey:      getEnv("BREVO_API_KEY", ""),
+		BrevoSenderName:  getEnv("BREVO_SENDER_NAME", "RUMA"),
+		BrevoSenderEmail: getEnv("BREVO_SENDER_EMAIL", ""),
 	}
 }
 
